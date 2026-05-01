@@ -20,7 +20,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 BOT_TOKEN = "8738511395:AAF2BtIXebNnttWN1cpyFM9sD0nfHa4DLqA"
 STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"           # Замените при наличии
 YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"        # Замените при наличии
-ADMIN_IDS = [5975768284, 8319217707, 6403805365]  # ID администраторов
+ADMIN_IDS = [5975768248, 8319217707, 6403805365]  # ID администраторов
 
 # ---------- Спонсорские каналы ----------
 # Формат: {"id": "@username" или числовой ID канала, "name": "Отображаемое имя"}
