@@ -630,24 +630,28 @@ async def admin_panel(message: types.Message):
         reply_markup=get_admin_keyboard()
     )
 
-# ========== ОБРАБОТЧИК ДОБАВЛЕНИЯ ФИЛЬМА (исправлен и перемещён выше) ==========
+# === ИСПРАВЛЕННЫЙ ОБРАБОТЧИК admin_add_movie (размещён здесь, до остальных) ===
 @dp.callback_query(lambda c: c.data == "admin_add_movie")
 async def admin_add_movie(callback: types.CallbackQuery, state: FSMContext):
-    print("admin_add_movie вызван")  # отладочный вывод
+    print("=== admin_add_movie CALLBACK RECEIVED ===")  # отладочный вывод
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
-    # Сбрасываем предыдущее состояние, если оно было
+    # Отвечаем на колбэк, чтобы кнопка перестала "висеть"
+    await callback.answer()
+    # Сбрасываем предыдущее состояние
     await state.clear()
+    # Редактируем сообщение – заменяем админ-панель на первый шаг добавления
     await callback.message.edit_text(
-        "🎬 *Добавление нового фильма*\n\n📹 *Шаг 1/9:* Отправьте видео файлом.\n\n"
+        "🎬 *Добавление нового фильма*\n\n"
+        "📹 *Шаг 1/9:* Отправьте видео файлом.\n\n"
         "Видео будет сохранено в Telegram, я получу его file_id.",
         parse_mode=ParseMode.MARKDOWN
     )
     await state.set_state(AddMovieStates.waiting_for_video)
-    await callback.answer()
-    print(f"Состояние установлено: {await state.get_state()}")  # отладочный вывод
+    print(f"Состояние установлено: {await state.get_state()}")
 
+# ========== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ АДМИНКИ (без изменений) ==========
 @dp.callback_query(lambda c: c.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
