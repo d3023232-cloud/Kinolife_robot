@@ -49,7 +49,7 @@ class AdVideoStates(StatesGroup):
     waiting_for_video = State()
 
 class WatchAdStates(StatesGroup):
-    waiting_for_movie = State()  # хранит movie_id, который хочет посмотреть пользователь
+    waiting_for_movie = State()
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 logging.basicConfig(level=logging.INFO)
@@ -96,7 +96,6 @@ def init_db():
     conn.close()
 
 def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
-    """Добавляет дни к существующей подписке или создаёт новую."""
     conn = sqlite3.connect("cinema.db")
     c = conn.cursor()
     now = datetime.now()
@@ -147,7 +146,6 @@ def add_referral(inviter_id: int, invited_id: int):
         c.execute("INSERT INTO referrals (inviter_id, invited_id, created_at) VALUES (?, ?, ?)",
                   (inviter_id, invited_id, datetime.now().isoformat()))
         conn.commit()
-        # Проверка на 3 приглашения
         c.execute("SELECT COUNT(*) FROM referrals WHERE inviter_id = ?", (inviter_id,))
         count = c.fetchone()[0]
         if count >= 3:
@@ -193,7 +191,6 @@ def get_subscription_info(user_id: int):
         return row[0], datetime.fromisoformat(row[1])
     return None, None
 
-# ---------- Остальные функции работы с БД (без изменений) ----------
 def search_movies(query: str):
     conn = sqlite3.connect("cinema.db")
     c = conn.cursor()
@@ -270,7 +267,6 @@ def get_admin_keyboard():
     ])
 
 def get_main_menu_keyboard():
-    bot_username = getattr(bot, 'username', None)
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Начать поиск", switch_inline_query_current_chat="")],
         [InlineKeyboardButton(text="💎 Купить VIP", callback_data="show_tariffs")],
@@ -306,7 +302,7 @@ async def show_sponsors_check(message: types.Message):
     keyboard.append([InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sponsors")])
     await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
-# ========== INLINE ПОИСК (без изменений) ==========
+# ========== INLINE ПОИСК ==========
 @dp.inline_query()
 async def inline_search(inline_query: types.InlineQuery):
     query = inline_query.query.strip()
@@ -343,19 +339,15 @@ async def watch_movie(callback: types.CallbackQuery, state: FSMContext):
         return
 
     video_file_id = movie[8]
-    # Проверяем активную подписку
     plan, end_date = get_subscription_info(user_id)
     if plan:
-        # Есть подписка
         await bot.send_video(chat_id=user_id, video=video_file_id,
                              caption=f"🎬 *{movie[1]}*\n🍿 Приятного просмотра!", parse_mode=ParseMode.MARKDOWN)
         await callback.answer()
         return
 
-    # Нет подписки – показываем рекламу
     ad_video = get_ad_video()
     if not ad_video:
-        # Если реклама не загружена, предложим подписку
         await callback.message.answer(
             "🔒 *У вас нет подписки.*\nОформите доступ к фильмам:",
             reply_markup=get_tariffs_keyboard(movie_id),
@@ -364,11 +356,9 @@ async def watch_movie(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # Сохраняем movie_id в состояние
     await state.set_state(WatchAdStates.waiting_for_movie)
     await state.update_data(movie_id=movie_id, video_file_id=video_file_id, movie_title=movie[1])
 
-    # Отправляем рекламное видео
     await bot.send_video(
         chat_id=user_id,
         video=ad_video,
@@ -395,7 +385,6 @@ async def ad_watched(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка, попробуйте снова", show_alert=True)
         await state.clear()
         return
-    # Отправляем фильм
     await bot.send_video(chat_id=user_id, video=video_file_id,
                          caption=f"🎬 *{movie_title}*\n🍿 Приятного просмотра!", parse_mode=ParseMode.MARKDOWN)
     await state.clear()
@@ -444,7 +433,6 @@ async def pay_with_stars(callback: types.CallbackQuery):
     prices = {"1m": 99, "3m": 199, "12m": 499}
     months = {"1m": 1, "3m": 3, "12m": 12}
     payment_id = str(uuid.uuid4())
-    # сохраняем платёж (функция save_payment_record не изменена)
     conn = sqlite3.connect("cinema.db")
     c = conn.cursor()
     c.execute("INSERT INTO payments VALUES (?, ?, ?, ?, ?, ?)",
@@ -502,17 +490,14 @@ async def process_payment(message: types.Message):
     plan_type = parts[1]
     user_id = int(parts[2])
     payment_id = parts[3]
-    # Обновляем статус платежа
     conn = sqlite3.connect("cinema.db")
     c = conn.cursor()
     c.execute("UPDATE payments SET status = ? WHERE payment_id = ?", ("completed", payment_id))
     conn.commit()
     conn.close()
-    # Продлеваем подписку (дни)
     days_map = {"1m": 30, "3m": 90, "12m": 365}
     days = days_map.get(plan_type, 30)
     extend_subscription(user_id, days, plan_type)
-    # Проверяем реферальную награду
     reward_inviter_on_purchase(user_id)
     method = "Telegram Stars" if payment_type == "stars" else "ЮKassa"
     await message.answer(
@@ -534,7 +519,6 @@ async def partner_info(callback: types.CallbackQuery):
     bot_username = (await bot.get_me()).username
     invite_link = f"https://t.me/{bot_username}?start=ref{user_id}"
     invites_count = count_invites(user_id)
-    # Проверяем, получен ли бонус за 3 приглашения
     conn = sqlite3.connect("cinema.db")
     c = conn.cursor()
     c.execute("SELECT rewarded_for_3 FROM referrals WHERE inviter_id = ? AND rewarded_for_3 = 1 LIMIT 1", (user_id,))
@@ -580,7 +564,7 @@ async def check_sponsors_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if await is_subscribed_to_sponsors(user_id):
         await show_main_menu(callback.message, user_id)
-        await callback.message.delete()  # удаляем сообщение с проверкой
+        await callback.message.delete()
     else:
         await callback.answer("❌ Вы не подписаны на всех спонсоров. Подпишитесь и нажмите снова.", show_alert=True)
 
@@ -645,6 +629,24 @@ async def admin_panel(message: types.Message):
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_admin_keyboard()
     )
+
+# ========== ОБРАБОТЧИК ДОБАВЛЕНИЯ ФИЛЬМА (исправлен и перемещён выше) ==========
+@dp.callback_query(lambda c: c.data == "admin_add_movie")
+async def admin_add_movie(callback: types.CallbackQuery, state: FSMContext):
+    print("admin_add_movie вызван")  # отладочный вывод
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    # Сбрасываем предыдущее состояние, если оно было
+    await state.clear()
+    await callback.message.edit_text(
+        "🎬 *Добавление нового фильма*\n\n📹 *Шаг 1/9:* Отправьте видео файлом.\n\n"
+        "Видео будет сохранено в Telegram, я получу его file_id.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    await state.set_state(AddMovieStates.waiting_for_video)
+    await callback.answer()
+    print(f"Состояние установлено: {await state.get_state()}")  # отладочный вывод
 
 @dp.callback_query(lambda c: c.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
@@ -726,19 +728,59 @@ async def process_delete_movie(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Фильм *{movie[1]}* (ID: {movie_id}) удалён", parse_mode=ParseMode.MARKDOWN)
     await state.clear()
 
-@dp.callback_query(lambda c: c.data == "admin_add_movie")
-async def admin_add_movie(callback: types.CallbackQuery, state: FSMContext):
+# ========== ЗАГРУЗКА РЕКЛАМНОГО ВИДЕО (АДМИН) ==========
+@dp.callback_query(lambda c: c.data == "admin_upload_ad")
+async def admin_upload_ad(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     await callback.message.edit_text(
-        "🎬 *Добавление нового фильма*\n\n📹 *Шаг 1/9:* Отправьте видео файлом.\n\n"
-        "Видео будет сохранено в Telegram, я получу его file_id.",
+        "📢 *Загрузка рекламного видео*\n\nОтправьте видео файлом. Это видео будет показываться всем пользователям без подписки перед просмотром.",
         parse_mode=ParseMode.MARKDOWN
     )
-    await state.set_state(AddMovieStates.waiting_for_video)
+    await state.set_state(AdVideoStates.waiting_for_video)
     await callback.answer()
 
+@dp.message(AdVideoStates.waiting_for_video)
+async def process_ad_video(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await state.clear()
+        return
+    if not message.video:
+        await message.answer("❌ Отправьте видео файлом")
+        return
+    file_id = message.video.file_id
+    set_ad_video(file_id)
+    await message.answer(f"✅ Рекламное видео сохранено!\n`{file_id}`", parse_mode=ParseMode.MARKDOWN)
+    await state.clear()
+
+@dp.callback_query(lambda c: c.data == "back_to_admin")
+async def back_to_admin(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "🔐 *Админ-панель*\n\nВыберите действие:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_admin_keyboard()
+    )
+    await callback.answer()
+
+# ========== ОБРАБОТЧИК /start ==========
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, command: CommandObject):
+    user_id = message.from_user.id
+    args = command.args
+    if args and args.startswith("ref"):
+        try:
+            inviter_id = int(args[3:])
+            if inviter_id != user_id:
+                add_referral(inviter_id, user_id)
+        except:
+            pass
+    if await is_subscribed_to_sponsors(user_id):
+        await show_main_menu(message, user_id)
+    else:
+        await show_sponsors_check(message)
+
+# ========== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ДЛЯ ДОБАВЛЕНИЯ ФИЛЬМА (шаги 1-9) ==========
 @dp.message(AddMovieStates.waiting_for_video)
 async def add_movie_video(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
@@ -813,7 +855,12 @@ async def add_movie_rating_imdb(message: types.Message, state: FSMContext):
         await state.update_data(rating_imdb=val if val > 0 else None)
     except:
         await state.update_data(rating_imdb=None)
-    await message.answer("📝 *Шаг 9/9:* Введите описание фильма (несколько предложений):", parse_mode=ParseMode.MARKDOWN)
+    await message.answer(
+        "📝 *Шаг 9/9:* Введите описание фильма.\n\n"
+        "Напишите описание фильма: краткий сюжет, главные герои, интересные особенности. "
+        "Это описание увидят пользователи при поиске.",
+        parse_mode=ParseMode.MARKDOWN
+    )
     await state.set_state(AddMovieStates.waiting_for_description)
 
 @dp.message(AddMovieStates.waiting_for_description)
@@ -836,60 +883,6 @@ async def add_movie_description(message: types.Message, state: FSMContext):
         parse_mode=ParseMode.MARKDOWN
     )
     await state.clear()
-
-# ========== ЗАГРУЗКА РЕКЛАМНОГО ВИДЕО (АДМИН) ==========
-@dp.callback_query(lambda c: c.data == "admin_upload_ad")
-async def admin_upload_ad(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Нет доступа", show_alert=True)
-        return
-    await callback.message.edit_text(
-        "📢 *Загрузка рекламного видео*\n\nОтправьте видео файлом. Это видео будет показываться всем пользователям без подписки перед просмотром.",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    await state.set_state(AdVideoStates.waiting_for_video)
-    await callback.answer()
-
-@dp.message(AdVideoStates.waiting_for_video)
-async def process_ad_video(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        await state.clear()
-        return
-    if not message.video:
-        await message.answer("❌ Отправьте видео файлом")
-        return
-    file_id = message.video.file_id
-    set_ad_video(file_id)
-    await message.answer(f"✅ Рекламное видео сохранено!\n`{file_id}`", parse_mode=ParseMode.MARKDOWN)
-    await state.clear()
-
-@dp.callback_query(lambda c: c.data == "back_to_admin")
-async def back_to_admin(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "🔐 *Админ-панель*\n\nВыберите действие:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=get_admin_keyboard()
-    )
-    await callback.answer()
-
-# ========== ОБРАБОТЧИК /start ==========
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, command: CommandObject):
-    user_id = message.from_user.id
-    args = command.args
-    # Обработка реферальной ссылки
-    if args and args.startswith("ref"):
-        try:
-            inviter_id = int(args[3:])
-            if inviter_id != user_id:
-                add_referral(inviter_id, user_id)
-        except:
-            pass
-    # Проверка подписки на спонсоров
-    if await is_subscribed_to_sponsors(user_id):
-        await show_main_menu(message, user_id)
-    else:
-        await show_sponsors_check(message)
 
 # ========== ЗАПУСК ==========
 async def main():
