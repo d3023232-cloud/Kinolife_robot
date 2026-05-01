@@ -17,7 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 BOT_TOKEN = "8738511395:AAF2BtIXebNnttWN1cpyFM9sD0nfHa4DLqA"                    # Получить у @BotFather
 STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"             # Telegram Stars (у @BotFather /newpayment)
 YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"          # ЮKassa токен (у @BotFather /newpayment)
-ADMIN_IDS = [5975768284]  # Твой Telegram ID (можно узнать у @userinfobot)
+ADMIN_IDS = [5975768284, 8319217707]  # Твой Telegram ID (можно узнать у @userinfobot)
 # ==============================================
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
