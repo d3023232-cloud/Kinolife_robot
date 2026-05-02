@@ -23,7 +23,6 @@ YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"        # Замени�
 ADMIN_IDS = [5975768248, 8319217707, 6403805365]  # ID администраторов
 
 # ---------- Спонсорские каналы ----------
-# Формат: {"id": "@username" или числовой ID канала, "name": "Отображаемое имя"}
 SPONSOR_CHANNELS = [
     {"id": "@TMD300", "name": "Спонсор 1"},
     {"id": "@TMD033", "name": "Спонсор 2"},
@@ -57,9 +56,17 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# ========== БАЗА ДАННЫХ ==========
+# ========== БАЗА ДАННЫХ (ОБЩЕЕ ХРАНИЛИЩЕ) ==========
+DATABASE_PATH = "/app/shared/cinema.db"   # путь в общем томе
+
+def get_db_connection():
+    """Возвращает соединение с БД с таймаутом и row_factory."""
+    conn = sqlite3.connect(DATABASE_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 def init_db():
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS movies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +103,7 @@ def init_db():
     conn.close()
 
 def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     now = datetime.now()
     c.execute("SELECT end_date, active FROM subscriptions WHERE user_id = ?", (user_id,))
@@ -115,7 +122,7 @@ def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
     conn.close()
 
 def get_ad_video() -> str | None:
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT value FROM ad_settings WHERE key = 'ad_video_file_id'")
     row = c.fetchone()
@@ -123,14 +130,14 @@ def get_ad_video() -> str | None:
     return row[0] if row else None
 
 def set_ad_video(file_id: str):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO ad_settings (key, value) VALUES ('ad_video_file_id', ?)", (file_id,))
     conn.commit()
     conn.close()
 
 def get_inviter_id(invited_id: int) -> int | None:
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT inviter_id FROM referrals WHERE invited_id = ?", (invited_id,))
     row = c.fetchone()
@@ -140,7 +147,7 @@ def get_inviter_id(invited_id: int) -> int | None:
 def add_referral(inviter_id: int, invited_id: int):
     if inviter_id == invited_id:
         return False
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     try:
         c.execute("INSERT INTO referrals (inviter_id, invited_id, created_at) VALUES (?, ?, ?)",
@@ -161,7 +168,7 @@ def add_referral(inviter_id: int, invited_id: int):
         return False
 
 def reward_inviter_on_purchase(user_id: int):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT inviter_id, rewarded_for_purchase FROM referrals WHERE invited_id = ?", (user_id,))
     row = c.fetchone()
@@ -173,7 +180,7 @@ def reward_inviter_on_purchase(user_id: int):
     conn.close()
 
 def count_invites(user_id: int):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM referrals WHERE inviter_id = ?", (user_id,))
     count = c.fetchone()[0]
@@ -181,7 +188,7 @@ def count_invites(user_id: int):
     return count
 
 def get_subscription_info(user_id: int):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT plan_type, end_date FROM subscriptions WHERE user_id = ? AND active = 1 AND end_date > ?",
               (user_id, datetime.now().isoformat()))
@@ -192,7 +199,7 @@ def get_subscription_info(user_id: int):
     return None, None
 
 def search_movies(query: str):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("""SELECT id, title, year, rating_kp, rating_imdb, country, genres
                  FROM movies WHERE title LIKE ? OR keywords LIKE ? LIMIT 10""",
@@ -202,7 +209,7 @@ def search_movies(query: str):
     return rows
 
 def get_movie_by_id(movie_id: int):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM movies WHERE id = ?", (movie_id,))
     row = c.fetchone()
@@ -210,7 +217,7 @@ def get_movie_by_id(movie_id: int):
     return row
 
 def get_all_movies():
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT id, title, year FROM movies ORDER BY id DESC")
     rows = c.fetchall()
@@ -218,14 +225,14 @@ def get_all_movies():
     return rows
 
 def delete_movie_by_id(movie_id: int):
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("DELETE FROM movies WHERE id = ?", (movie_id,))
     conn.commit()
     conn.close()
 
 def get_movies_count():
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM movies")
     count = c.fetchone()[0]
@@ -233,7 +240,7 @@ def get_movies_count():
     return count
 
 def get_active_subscriptions_count():
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1 AND end_date > ?", (datetime.now().isoformat(),))
     count = c.fetchone()[0]
@@ -433,7 +440,7 @@ async def pay_with_stars(callback: types.CallbackQuery):
     prices = {"1m": 99, "3m": 199, "12m": 499}
     months = {"1m": 1, "3m": 3, "12m": 12}
     payment_id = str(uuid.uuid4())
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("INSERT INTO payments VALUES (?, ?, ?, ?, ?, ?)",
               (payment_id, user_id, prices[plan_type], "STARS", "pending", datetime.now().isoformat()))
@@ -460,7 +467,7 @@ async def pay_with_yukassa(callback: types.CallbackQuery):
     prices = {"1m": 99, "3m": 199, "12m": 499}
     months = {"1m": 1, "3m": 3, "12m": 12}
     payment_id = str(uuid.uuid4())
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("INSERT INTO payments VALUES (?, ?, ?, ?, ?, ?)",
               (payment_id, user_id, prices[plan_type], "RUB", "pending", datetime.now().isoformat()))
@@ -490,7 +497,7 @@ async def process_payment(message: types.Message):
     plan_type = parts[1]
     user_id = int(parts[2])
     payment_id = parts[3]
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("UPDATE payments SET status = ? WHERE payment_id = ?", ("completed", payment_id))
     conn.commit()
@@ -519,7 +526,7 @@ async def partner_info(callback: types.CallbackQuery):
     bot_username = (await bot.get_me()).username
     invite_link = f"https://t.me/{bot_username}?start=ref{user_id}"
     invites_count = count_invites(user_id)
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT rewarded_for_3 FROM referrals WHERE inviter_id = ? AND rewarded_for_3 = 1 LIMIT 1", (user_id,))
     bonus_3 = c.fetchone() is not None
@@ -542,7 +549,7 @@ async def cmd_referral(message: types.Message):
     bot_username = (await bot.get_me()).username
     invite_link = f"https://t.me/{bot_username}?start=ref{user_id}"
     invites_count = count_invites(user_id)
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT rewarded_for_3 FROM referrals WHERE inviter_id = ? AND rewarded_for_3 = 1 LIMIT 1", (user_id,))
     bonus_3 = c.fetchone() is not None
@@ -870,7 +877,7 @@ async def add_movie_rating_imdb(message: types.Message, state: FSMContext):
 @dp.message(AddMovieStates.waiting_for_description)
 async def add_movie_description(message: types.Message, state: FSMContext):
     data = await state.update_data(description=message.text.strip())
-    conn = sqlite3.connect("cinema.db")
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("""
         INSERT INTO movies (title, year, rating_kp, rating_imdb, country, genres, keywords, description, video_file_id, created_at)
