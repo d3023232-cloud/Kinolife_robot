@@ -15,19 +15,17 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ==============================================
-# ⚙️ НАСТРОЙКИ - ЗАМЕНИТЕ НА СВОИ
+# ⚙️ НАСТРОЙКИ
 # ==============================================
 BOT_TOKEN = "8738511395:AAF2BtIXebNnttWN1cpyFM9sD0nfHa4DLqA"
-STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"           # Замените при наличии
-YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"        # Замените при наличии
-ADMIN_IDS = [5975768248, 8319217707, 6403805365]  # ID администраторов
+STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"
+YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"
+ADMIN_IDS = [5975768248, 8319217707, 6403805365]
 
-# ---------- Спонсорские каналы ----------
 SPONSOR_CHANNELS = [
     {"id": "@TMD300", "name": "Спонсор 1"},
     {"id": "@TMD033", "name": "Спонсор 2"},
 ]
-# ----------------------------------------
 
 # ========== СОСТОЯНИЯ FSM ==========
 class AddMovieStates(StatesGroup):
@@ -56,11 +54,10 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# ========== БАЗА ДАННЫХ (ОБЩЕЕ ХРАНИЛИЩЕ) ==========
-DATABASE_PATH = "/app/shared/cinema.db"   # путь в общем томе
+# ========== БАЗА ДАННЫХ (ЛОКАЛЬНАЯ) ==========
+DATABASE_PATH = "cinema.db"
 
 def get_db_connection():
-    """Возвращает соединение с БД с таймаутом и row_factory."""
     conn = sqlite3.connect(DATABASE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
@@ -101,7 +98,7 @@ def init_db():
     )""")
     conn.commit()
     conn.close()
-
+    
 def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
     conn = get_db_connection()
     c = conn.cursor()
@@ -265,6 +262,7 @@ def get_payment_methods_keyboard(plan_type: str, movie_id: int = None):
     ])
 
 def get_admin_keyboard():
+    # ВАЖНО: обычная кнопка с callback, без ссылки на второго бота
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить фильм", callback_data="admin_add_movie")],
         [InlineKeyboardButton(text="📋 Список фильмов", callback_data="admin_list_movies")],
@@ -286,7 +284,7 @@ def get_partner_keyboard():
         [InlineKeyboardButton(text="💎 Купить VIP", callback_data="show_tariffs")],
         [InlineKeyboardButton(text="🤝 Партнёрская программа", callback_data="partner_info")]
     ])
-
+    
 # ========== ПРОВЕРКА ПОДПИСКИ НА СПОНСОРОВ ==========
 async def is_subscribed_to_sponsors(user_id: int) -> bool:
     for ch in SPONSOR_CHANNELS:
@@ -900,10 +898,6 @@ async def main():
     init_db()
     bot_info = await bot.get_me()
     print(f"🤖 Бот запущен: @{bot_info.username}")
-    print(f"⭐ Stars токен: {'✅ установлен' if STARS_TOKEN != 'ТВОЙ_ТОКЕН_ДЛЯ_STARS' else '❌ НЕ УСТАНОВЛЕН'}")
-    print(f"💳 ЮKassa токен: {'✅ установлен' if YUKASSA_TOKEN != 'ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ' else '❌ НЕ УСТАНОВЛЕН'}")
-    print(f"👑 Администраторы: {ADMIN_IDS}")
-    print("🎬 Кино-бот готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
