@@ -737,7 +737,9 @@ async def process_delete_movie(message: types.Message, state: FSMContext):
     await state.clear()
 
 @dp.callback_query(lambda c: c.data == "back_to_admin")
-async def back_to_admin(callback: types.CallbackQuery):
+async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
+    # Сбрасываем ЛЮБОЕ текущее состояние (удаление, добавление и т.д.)
+    await state.clear()
     await callback.message.edit_text(
         "🔐 *Админ-панель*\n\nВыберите действие:",
         parse_mode=ParseMode.MARKDOWN,
