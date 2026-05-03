@@ -22,7 +22,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # КОНФИГУРАЦИЯ ИЗ ENV (BotHost)
 # ==============================================
 
-# BotHost использует API_TOKEN вместо BOT_TOKEN
 BOT_TOKEN = os.getenv("API_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("API_TOKEN не установлен в переменных окружения!")
@@ -33,11 +32,8 @@ YUKASSA_TOKEN = os.getenv("YUKASSA_TOKEN", "")
 admin_ids_str = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in admin_ids_str.split(",") if x.strip()]
 
-# BotHost даёт папку /app/data, БД должна быть внутри неё
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")
 DATABASE_PATH = os.path.join(DATA_DIR, "cinema.db")
-
-# Создаём папку для данных, если её нет
 os.makedirs(DATA_DIR, exist_ok=True)
 
 SPONSOR_CHANNELS = [
@@ -358,40 +354,50 @@ async def inline_search(inline_query: types.InlineQuery):
         ))
     await inline_query.answer(results, cache_time=1)
 
-# ========== ПРОСМОТР ФИЛЬМА (ИСПРАВЛЕННЫЙ) ==========
+# ========== ПРОСМОТР ФИЛЬМА (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ==========
 @dp.callback_query(lambda c: c.data.startswith("watch_"))
 async def watch_movie(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     movie_id = int(callback.data.split("_")[1])
     movie = get_movie_by_id(movie_id)
+    
     if not movie:
-        await callback.message.answer("❌ Фильм не найден")
-        await callback.answer()
+        await callback.answer("❌ Фильм не найден", show_alert=True)
         return
 
     video_file_id = movie[8]
     plan, end_date = get_subscription_info(user_id)
+    
     if plan:
-        # Удаляем карточку фильма перед отправкой видео
+        # Есть подписка — редактируем сообщение на "Загрузка..." и отправляем видео
         try:
-            await callback.message.delete()
+            await callback.message.edit_text(
+                "⏳ *Загружаю видео...*",
+                parse_mode=ParseMode.MARKDOWN
+            )
         except Exception as e:
-            logger.warning(f"Не удалось удалить сообщение: {e}")
+            logger.warning(f"Не удалось редактировать сообщение: {e}")
         
-        # Отправляем видео файл
+        # Отправляем видео в тот же чат, где было сообщение
         try:
             await bot.send_video(
-                chat_id=user_id,
+                chat_id=callback.message.chat.id,
                 video=video_file_id,
                 caption=f"🎬 *{movie[1]}*\n🍿 Приятного просмотра!",
                 parse_mode=ParseMode.MARKDOWN
             )
+            # Удаляем сообщение "Загрузка..."
+            try:
+                await callback.message.delete()
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение загрузки: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки видео: {e}")
-            await bot.send_message(
-                chat_id=user_id,
-                text="❌ Не удалось загрузить видео. Возможно, файл был удалён из Telegram. Обратитесь к администратору."
+            await callback.message.edit_text(
+                "❌ *Не удалось загрузить видео.*\nВозможно, файл был удалён из Telegram. Обратитесь к администратору.",
+                parse_mode=ParseMode.MARKDOWN
             )
+        
         await callback.answer()
         return
 
@@ -951,7 +957,6 @@ async def main():
     logger.info(f"💾 База данных: {DATABASE_PATH}")
     logger.info("🎬 Кино-бот готов к работе!")
     
-    # Регистрируем обработчики сигналов
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
