@@ -15,11 +15,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ==============================================
-# ⚙️ НАСТРОЙКИ
+# НАСТРОЙКИ
 # ==============================================
 BOT_TOKEN = "8738511395:AAF2BtIXebNnttWN1cpyFM9sD0nfHa4DLqA"
-STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"
-YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"
+STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"      # заменить при наличии
+YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"   # заменить при наличии
 ADMIN_IDS = [5975768248, 8319217707, 6403805365]
 
 SPONSOR_CHANNELS = [
@@ -28,22 +28,12 @@ SPONSOR_CHANNELS = [
 ]
 
 # ========== СОСТОЯНИЯ FSM ==========
-class AddMovieStates(StatesGroup):
-    waiting_for_video = State()
-    waiting_for_title = State()
-    waiting_for_year = State()
-    waiting_for_country = State()
-    waiting_for_genres = State()
+class QuickAdd(StatesGroup):
+    waiting_for_file_id = State()
     waiting_for_keywords = State()
-    waiting_for_rating_kp = State()
-    waiting_for_rating_imdb = State()
-    waiting_for_description = State()
 
 class DeleteMovieStates(StatesGroup):
     waiting_for_id = State()
-
-class AdVideoStates(StatesGroup):
-    waiting_for_video = State()
 
 class WatchAdStates(StatesGroup):
     waiting_for_movie = State()
@@ -54,8 +44,8 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# ========== БАЗА ДАННЫХ (ЛОКАЛЬНАЯ) ==========
-DATABASE_PATH = "cinema.db"
+# ========== БАЗА ДАННЫХ ==========
+DATABASE_PATH = "cinema.db"          # локальная база, без общих томов
 
 def get_db_connection():
     conn = sqlite3.connect(DATABASE_PATH, timeout=10)
@@ -92,13 +82,15 @@ def init_db():
         rewarded_for_3 BOOLEAN DEFAULT 0,
         UNIQUE(invited_id)
     )""")
+    # ad_settings больше не нужна, но оставим для совместимости
     c.execute("""CREATE TABLE IF NOT EXISTS ad_settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )""")
     conn.commit()
     conn.close()
-    
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БД ==========
 def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
     conn = get_db_connection()
     c = conn.cursor()
@@ -108,7 +100,7 @@ def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
     if row and row[1]:
         end_date = datetime.fromisoformat(row[0])
         new_end = end_date + timedelta(days=days)
-        c.execute("""UPDATE subscriptions SET end_date = ?, plan_type = ? WHERE user_id = ?""",
+        c.execute("UPDATE subscriptions SET end_date = ?, plan_type = ? WHERE user_id = ?",
                   (new_end.isoformat(), plan_type, user_id))
     else:
         new_end = now + timedelta(days=days)
@@ -119,19 +111,11 @@ def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
     conn.close()
 
 def get_ad_video() -> str | None:
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT value FROM ad_settings WHERE key = 'ad_video_file_id'")
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
+    # Реклама отключена, всегда возвращаем None
+    return None
 
 def set_ad_video(file_id: str):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO ad_settings (key, value) VALUES ('ad_video_file_id', ?)", (file_id,))
-    conn.commit()
-    conn.close()
+    pass                     # заглушка
 
 def get_inviter_id(invited_id: int) -> int | None:
     conn = get_db_connection()
@@ -198,8 +182,10 @@ def get_subscription_info(user_id: int):
 def search_movies(query: str):
     conn = get_db_connection()
     c = conn.cursor()
+    # Сортировка по году по убыванию (самые новые первыми)
     c.execute("""SELECT id, title, year, rating_kp, rating_imdb, country, genres
-                 FROM movies WHERE title LIKE ? OR keywords LIKE ? LIMIT 10""",
+                 FROM movies WHERE title LIKE ? OR keywords LIKE ?
+                 ORDER BY year DESC LIMIT 10""",
               (f"%{query}%", f"%{query}%"))
     rows = c.fetchall()
     conn.close()
@@ -216,7 +202,7 @@ def get_movie_by_id(movie_id: int):
 def get_all_movies():
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT id, title, year FROM movies ORDER BY id DESC")
+    c.execute("SELECT id, title, year FROM movies ORDER BY year DESC, id DESC")
     rows = c.fetchall()
     conn.close()
     return rows
@@ -262,12 +248,10 @@ def get_payment_methods_keyboard(plan_type: str, movie_id: int = None):
     ])
 
 def get_admin_keyboard():
-    # ВАЖНО: обычная кнопка с callback, без ссылки на второго бота
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить фильм", callback_data="admin_add_movie")],
         [InlineKeyboardButton(text="📋 Список фильмов", callback_data="admin_list_movies")],
-        [InlineKeyboardButton(text="🗑️ Удалить фильм", callback_data="admin_delete_movie")],
-        [InlineKeyboardButton(text="📢 Загрузить рекламное видео", callback_data="admin_upload_ad")],
+        [InlineKeyboardButton(text="🗑 Удалить фильм", callback_data="admin_delete_movie")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
     ])
 
@@ -284,7 +268,7 @@ def get_partner_keyboard():
         [InlineKeyboardButton(text="💎 Купить VIP", callback_data="show_tariffs")],
         [InlineKeyboardButton(text="🤝 Партнёрская программа", callback_data="partner_info")]
     ])
-    
+
 # ========== ПРОВЕРКА ПОДПИСКИ НА СПОНСОРОВ ==========
 async def is_subscribed_to_sponsors(user_id: int) -> bool:
     for ch in SPONSOR_CHANNELS:
@@ -307,13 +291,13 @@ async def show_sponsors_check(message: types.Message):
     keyboard.append([InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sponsors")])
     await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
-# ========== INLINE ПОИСК ==========
+# ========== INLINE ПОИСК (сортировка по новизне) ==========
 @dp.inline_query()
 async def inline_search(inline_query: types.InlineQuery):
     query = inline_query.query.strip()
     if len(query) < 2:
         return
-    movies = search_movies(query)
+    movies = search_movies(query)          # уже сортированы по year DESC
     results = []
     for movie in movies:
         movie_id, title, year, kp, imdb, country, genres = movie
@@ -332,9 +316,9 @@ async def inline_search(inline_query: types.InlineQuery):
         ))
     await inline_query.answer(results, cache_time=1)
 
-# ========== ПРОСМОТР ФИЛЬМА С РЕКЛАМОЙ ==========
+# ========== ПРОСМОТР ФИЛЬМА (без рекламы) ==========
 @dp.callback_query(lambda c: c.data.startswith("watch_"))
-async def watch_movie(callback: types.CallbackQuery, state: FSMContext):
+async def watch_movie(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     movie_id = int(callback.data.split("_")[1])
     movie = get_movie_by_id(movie_id)
@@ -351,51 +335,13 @@ async def watch_movie(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    ad_video = get_ad_video()
-    if not ad_video:
-        await callback.message.answer(
-            "🔒 *У вас нет подписки.*\nОформите доступ к фильмам:",
-            reply_markup=get_tariffs_keyboard(movie_id),
-            parse_mode=ParseMode.MARKDOWN
-        )
-        await callback.answer()
-        return
-
-    await state.set_state(WatchAdStates.waiting_for_movie)
-    await state.update_data(movie_id=movie_id, video_file_id=video_file_id, movie_title=movie[1])
-
-    await bot.send_video(
-        chat_id=user_id,
-        video=ad_video,
-        caption="📢 *Посмотрите рекламу, чтобы начать просмотр фильма*",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я посмотрел рекламу", callback_data="ad_watched")]
-        ])
+    await callback.message.answer(
+        "🔒 *У вас нет подписки.*\nОформите доступ к фильмам:",
+        reply_markup=get_tariffs_keyboard(movie_id),
+        parse_mode=ParseMode.MARKDOWN
     )
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "ad_watched")
-async def ad_watched(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    current_state = await state.get_state()
-    if current_state != WatchAdStates.waiting_for_movie.state:
-        await callback.answer("❓ Сначала запросите фильм", show_alert=True)
-        return
-    data = await state.get_data()
-    movie_id = data.get("movie_id")
-    video_file_id = data.get("video_file_id")
-    movie_title = data.get("movie_title")
-    if not movie_id:
-        await callback.answer("Ошибка, попробуйте снова", show_alert=True)
-        await state.clear()
-        return
-    await bot.send_video(chat_id=user_id, video=video_file_id,
-                         caption=f"🎬 *{movie_title}*\n🍿 Приятного просмотра!", parse_mode=ParseMode.MARKDOWN)
-    await state.clear()
-    await callback.answer("Приятного просмотра!", show_alert=False)
-
-# ========== ПОКУПКА ПОДПИСКИ ==========
 @dp.callback_query(lambda c: c.data.startswith("buy_subscription_"))
 async def buy_subscription(callback: types.CallbackQuery):
     movie_id = int(callback.data.split("_")[2])
@@ -623,7 +569,10 @@ async def cmd_status(message: types.Message):
             parse_mode=ParseMode.MARKDOWN
         )
 
-# ========== АДМИН-ПАНЕЛЬ ==========
+# =============================================================
+#   АДМИН‑ПАНЕЛЬ И ДОБАВЛЕНИЕ ФИЛЬМОВ (упрощённое)
+# =============================================================
+
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -635,28 +584,80 @@ async def admin_panel(message: types.Message):
         reply_markup=get_admin_keyboard()
     )
 
-# === ИСПРАВЛЕННЫЙ ОБРАБОТЧИК admin_add_movie (размещён здесь, до остальных) ===
+# --- Команда /add (ручной вызов) ---
+@dp.message(Command("add"))
+async def quick_add_start(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔ Нет доступа")
+        return
+    await message.answer(
+        "🎬 *Добавление фильма*\n\n"
+        "Отправьте мне видео (файлом) или просто напишите `file_id`, если он у вас уже есть.",
+        parse_mode="Markdown"
+    )
+    await state.set_state(QuickAdd.waiting_for_file_id)
+
+# --- Кнопка «Добавить фильм» в админке (то же самое, что и /add) ---
 @dp.callback_query(lambda c: c.data == "admin_add_movie")
-async def admin_add_movie(callback: types.CallbackQuery, state: FSMContext):
-    print("=== admin_add_movie CALLBACK RECEIVED ===")  # отладочный вывод
+async def admin_add_movie_callback(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
-    # Отвечаем на колбэк, чтобы кнопка перестала "висеть"
     await callback.answer()
-    # Сбрасываем предыдущее состояние
     await state.clear()
-    # Редактируем сообщение – заменяем админ-панель на первый шаг добавления
-    await callback.message.edit_text(
-        "🎬 *Добавление нового фильма*\n\n"
-        "📹 *Шаг 1/9:* Отправьте видео файлом.\n\n"
-        "Видео будет сохранено в Telegram, я получу его file_id.",
-        parse_mode=ParseMode.MARKDOWN
+    # Отправляем новое сообщение, не редактируем админку, чтобы не сломать кнопки
+    await callback.message.answer(
+        "🎬 *Добавление фильма*\n\n"
+        "Отправьте мне видео (файлом) или просто напишите `file_id`, если он у вас уже есть.",
+        parse_mode="Markdown"
     )
-    await state.set_state(AddMovieStates.waiting_for_video)
-    print(f"Состояние установлено: {await state.get_state()}")
+    await state.set_state(QuickAdd.waiting_for_file_id)
 
-# ========== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ АДМИНКИ (без изменений) ==========
+# --- Обработка file_id или видео ---
+@dp.message(QuickAdd.waiting_for_file_id)
+async def quick_add_file_id(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await state.clear(); return
+
+    if message.video:
+        file_id = message.video.file_id
+        await message.answer(f"✅ Видео получено, `file_id`:\n`{file_id}`\n\nТеперь введите *ключевые слова* через запятую:", parse_mode="Markdown")
+    else:
+        file_id = message.text.strip()
+        if len(file_id) < 20:
+            await message.answer("❌ Это не похоже на правильный `file_id`. Попробуйте ещё раз или отправьте видео.")
+            return
+        await message.answer("✅ `file_id` принят. Теперь введите *ключевые слова* через запятую (например: `комедия, приключения`):")
+
+    await state.update_data(video_file_id=file_id)
+    await state.set_state(QuickAdd.waiting_for_keywords)
+
+# --- Обработка ключевых слов и сохранение в БД ---
+@dp.message(QuickAdd.waiting_for_keywords)
+async def quick_add_keywords(message: types.Message, state: FSMContext):
+    data = await state.update_data(keywords=message.text.strip().lower())
+    conn = get_db_connection()
+    c = conn.cursor()
+    # Год используем текущий, чтобы сортировка работала
+    current_year = str(datetime.now().year)
+    c.execute("""
+        INSERT INTO movies (title, year, rating_kp, rating_imdb, country, genres, keywords, description, video_file_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        "Фильм без названия", current_year, None, None,
+        "", "", data['keywords'], "",
+        data['video_file_id'], datetime.now().isoformat()
+    ))
+    conn.commit()
+    movie_id = c.lastrowid
+    conn.close()
+    await message.answer(
+        f"✅ *Фильм добавлен!*\n🆔 ID: `{movie_id}`\n🔑 Ключевые слова: `{data['keywords']}`\n\nОн сразу появится в поиске.",
+        parse_mode="Markdown"
+    )
+    await state.clear()
+
+# ========== ОСТАЛЬНЫЕ АДМИНСКИЕ ФУНКЦИИ ==========
 @dp.callback_query(lambda c: c.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
@@ -688,7 +689,7 @@ async def admin_list_movies(callback: types.CallbackQuery):
         )
         await callback.answer()
         return
-    text = "📋 *Список фильмов:*\n\n"
+    text = "📋 *Список фильмов (сначала новые):*\n\n"
     for movie in movies[:20]:
         text += f"🎬 ID: `{movie[0]}` | {movie[1]} ({movie[2]})\n"
     if len(movies) > 20:
@@ -697,7 +698,7 @@ async def admin_list_movies(callback: types.CallbackQuery):
         text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑️ Удалить фильм по ID", callback_data="admin_delete_movie")],
+            [InlineKeyboardButton(text="🗑 Удалить фильм по ID", callback_data="admin_delete_movie")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
         ])
     )
@@ -709,8 +710,7 @@ async def admin_delete_movie_prompt(callback: types.CallbackQuery, state: FSMCon
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     await callback.message.edit_text(
-        "🗑️ *Удаление фильма*\n\nВведите ID фильма, который нужно удалить.\n"
-        "Список фильмов с ID можно посмотреть в «📋 Список фильмов»",
+        "🗑 *Удаление фильма*\n\nВведите ID фильма, который нужно удалить.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
@@ -722,8 +722,7 @@ async def admin_delete_movie_prompt(callback: types.CallbackQuery, state: FSMCon
 @dp.message(DeleteMovieStates.waiting_for_id)
 async def process_delete_movie(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
-        await state.clear()
-        return
+        await state.clear(); return
     if not message.text.isdigit():
         await message.answer("❌ Введите числовой ID фильма")
         return
@@ -735,32 +734,6 @@ async def process_delete_movie(message: types.Message, state: FSMContext):
         return
     delete_movie_by_id(movie_id)
     await message.answer(f"✅ Фильм *{movie[1]}* (ID: {movie_id}) удалён", parse_mode=ParseMode.MARKDOWN)
-    await state.clear()
-
-# ========== ЗАГРУЗКА РЕКЛАМНОГО ВИДЕО (АДМИН) ==========
-@dp.callback_query(lambda c: c.data == "admin_upload_ad")
-async def admin_upload_ad(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("⛔ Нет доступа", show_alert=True)
-        return
-    await callback.message.edit_text(
-        "📢 *Загрузка рекламного видео*\n\nОтправьте видео файлом. Это видео будет показываться всем пользователям без подписки перед просмотром.",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    await state.set_state(AdVideoStates.waiting_for_video)
-    await callback.answer()
-
-@dp.message(AdVideoStates.waiting_for_video)
-async def process_ad_video(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        await state.clear()
-        return
-    if not message.video:
-        await message.answer("❌ Отправьте видео файлом")
-        return
-    file_id = message.video.file_id
-    set_ad_video(file_id)
-    await message.answer(f"✅ Рекламное видео сохранено!\n`{file_id}`", parse_mode=ParseMode.MARKDOWN)
     await state.clear()
 
 @dp.callback_query(lambda c: c.data == "back_to_admin")
@@ -789,115 +762,15 @@ async def cmd_start(message: types.Message, command: CommandObject):
     else:
         await show_sponsors_check(message)
 
-# ========== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ДЛЯ ДОБАВЛЕНИЯ ФИЛЬМА (шаги 1-9) ==========
-@dp.message(AddMovieStates.waiting_for_video)
-async def add_movie_video(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("⛔ Нет доступа")
-        await state.clear()
-        return
-    if not message.video:
-        await message.answer("❌ Пожалуйста, отправьте видео файлом")
-        return
-    file_id = message.video.file_id
-    await state.update_data(video_file_id=file_id)
-    await message.answer(
-        f"✅ Видео получено!\n`{file_id}`\n\n📝 *Шаг 2/9:* Введите название фильма:",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    await state.set_state(AddMovieStates.waiting_for_title)
-
-@dp.message(AddMovieStates.waiting_for_title)
-async def add_movie_title(message: types.Message, state: FSMContext):
-    await state.update_data(title=message.text.strip())
-    await message.answer("📅 *Шаг 3/9:* Введите год выпуска (например: 2023):", parse_mode=ParseMode.MARKDOWN)
-    await state.set_state(AddMovieStates.waiting_for_year)
-
-@dp.message(AddMovieStates.waiting_for_year)
-async def add_movie_year(message: types.Message, state: FSMContext):
-    year = message.text.strip()
-    if not year.isdigit() or len(year) != 4:
-        await message.answer("❌ Введите корректный год (4 цифры, например: 2023)")
-        return
-    await state.update_data(year=year)
-    await message.answer("🌍 *Шаг 4/9:* Введите страну производства (например: США, Россия):", parse_mode=ParseMode.MARKDOWN)
-    await state.set_state(AddMovieStates.waiting_for_country)
-
-@dp.message(AddMovieStates.waiting_for_country)
-async def add_movie_country(message: types.Message, state: FSMContext):
-    await state.update_data(country=message.text.strip())
-    await message.answer("🎭 *Шаг 5/9:* Введите жанры через запятую (например: драма, комедия, боевик):", parse_mode=ParseMode.MARKDOWN)
-    await state.set_state(AddMovieStates.waiting_for_genres)
-
-@dp.message(AddMovieStates.waiting_for_genres)
-async def add_movie_genres(message: types.Message, state: FSMContext):
-    await state.update_data(genres=message.text.strip())
-    await message.answer(
-        "🔑 *Шаг 6/9:* Введите *ключевые слова* через запятую\n\n"
-        "Пример: `форсаж, вин дизель, гонки, тюнинг, машины`\n\n"
-        "⚠️ По этим словам пользователи смогут найти фильм!",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    await state.set_state(AddMovieStates.waiting_for_keywords)
-
-@dp.message(AddMovieStates.waiting_for_keywords)
-async def add_movie_keywords(message: types.Message, state: FSMContext):
-    keywords = message.text.strip().lower()
-    await state.update_data(keywords=keywords)
-    await message.answer("⭐ *Шаг 7/9:* Введите рейтинг Кинопоиска (например: 7.5 или 0 если нет):", parse_mode=ParseMode.MARKDOWN)
-    await state.set_state(AddMovieStates.waiting_for_rating_kp)
-
-@dp.message(AddMovieStates.waiting_for_rating_kp)
-async def add_movie_rating_kp(message: types.Message, state: FSMContext):
-    try:
-        val = float(message.text.strip().replace(',', '.'))
-        await state.update_data(rating_kp=val if val > 0 else None)
-    except:
-        await state.update_data(rating_kp=None)
-    await message.answer("🎬 *Шаг 8/9:* Введите рейтинг IMDb (например: 8.2 или 0 если нет):", parse_mode=ParseMode.MARKDOWN)
-    await state.set_state(AddMovieStates.waiting_for_rating_imdb)
-
-@dp.message(AddMovieStates.waiting_for_rating_imdb)
-async def add_movie_rating_imdb(message: types.Message, state: FSMContext):
-    try:
-        val = float(message.text.strip().replace(',', '.'))
-        await state.update_data(rating_imdb=val if val > 0 else None)
-    except:
-        await state.update_data(rating_imdb=None)
-    await message.answer(
-        "📝 *Шаг 9/9:* Введите описание фильма.\n\n"
-        "Напишите описание фильма: краткий сюжет, главные герои, интересные особенности. "
-        "Это описание увидят пользователи при поиске.",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    await state.set_state(AddMovieStates.waiting_for_description)
-
-@dp.message(AddMovieStates.waiting_for_description)
-async def add_movie_description(message: types.Message, state: FSMContext):
-    data = await state.update_data(description=message.text.strip())
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO movies (title, year, rating_kp, rating_imdb, country, genres, keywords, description, video_file_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (data['title'], data['year'], data['rating_kp'], data['rating_imdb'],
-          data['country'], data['genres'], data['keywords'], data['description'],
-          data['video_file_id'], datetime.now().isoformat()))
-    conn.commit()
-    movie_id = c.lastrowid
-    conn.close()
-    await message.answer(
-        f"✅ *Фильм успешно добавлен!*\n\n🎬 Название: {data['title']}\n🆔 ID: {movie_id}\n"
-        f"🔑 Ключевые слова: {data['keywords']}\n\nТеперь пользователи смогут найти его через поиск!",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    await state.clear()
-
 # ========== ЗАПУСК ==========
 async def main():
     init_db()
     bot_info = await bot.get_me()
     print(f"🤖 Бот запущен: @{bot_info.username}")
+    print(f"⭐ Stars токен: {'✅' if STARS_TOKEN != 'ТВОЙ_ТОКЕН_ДЛЯ_STARS' else '❌ НЕ УСТАНОВЛЕН'}")
+    print(f"💳 ЮKassa токен: {'✅' if YUKASSA_TOKEN != 'ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ' else '❌ НЕ УСТАНОВЛЕН'}")
+    print(f"👑 Администраторы: {ADMIN_IDS}")
+    print("🎬 Кино-бот готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
