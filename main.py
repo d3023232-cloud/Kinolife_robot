@@ -1,8 +1,12 @@
-import asyncio
+import os
+import sys
 import sqlite3
 import uuid
 import logging
+import signal
+import asyncio
 from datetime import datetime, timedelta
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
@@ -15,17 +19,42 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ==============================================
-# НАСТРОЙКИ
+# КОНФИГУРАЦИЯ ИЗ ENV (BotHost)
 # ==============================================
-BOT_TOKEN = "8738511395:AAF2BtIXebNnttWN1cpyFM9sD0nfHa4DLqA"
-STARS_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_STARS"
-YUKASSA_TOKEN = "ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ"
-ADMIN_IDS = [5975768248, 8319217707, 6403805365]
+
+# BotHost использует API_TOKEN вместо BOT_TOKEN
+BOT_TOKEN = os.getenv("API_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("API_TOKEN не установлен в переменных окружения!")
+
+STARS_TOKEN = os.getenv("STARS_TOKEN", "")
+YUKASSA_TOKEN = os.getenv("YUKASSA_TOKEN", "")
+
+admin_ids_str = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(x.strip()) for x in admin_ids_str.split(",") if x.strip()]
+
+# BotHost даёт папку /app/data, БД должна быть внутри неё
+DATA_DIR = os.getenv("DATA_DIR", "/app/data")
+DATABASE_PATH = os.path.join(DATA_DIR, "cinema.db")
+
+# Создаём папку для данных, если её нет
+os.makedirs(DATA_DIR, exist_ok=True)
 
 SPONSOR_CHANNELS = [
     {"id": "@TMD300", "name": "Спонсор 1"},
     {"id": "@TMD033", "name": "Спонсор 2"},
 ]
+
+# ========== ЛОГИРОВАНИЕ ==========
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(os.path.join(DATA_DIR, "bot.log"), encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ========== СОСТОЯНИЯ FSM ==========
 class QuickAdd(StatesGroup):
@@ -45,14 +74,11 @@ class WatchAdStates(StatesGroup):
     waiting_for_movie = State()
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
-logging.basicConfig(level=logging.INFO)
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
 # ========== БАЗА ДАННЫХ ==========
-DATABASE_PATH = "cinema.db"
-
 def get_db_connection():
     conn = sqlite3.connect(DATABASE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -281,7 +307,7 @@ async def is_subscribed_to_sponsors(user_id: int) -> bool:
             if member.status not in ("member", "creator", "administrator"):
                 return False
         except Exception as e:
-            logging.error(f"Ошибка проверки {channel_id}: {e}")
+            logger.error(f"Ошибка проверки {channel_id}: {e}")
             return False
     return True
 
@@ -304,7 +330,6 @@ async def inline_search(inline_query: types.InlineQuery):
     results = []
     for movie in movies:
         movie_id, title, year, kp, imdb, country, genres = movie
-        # Формируем красивое описание
         description_parts = []
         if year: description_parts.append(f"{year}")
         if kp: description_parts.append(f"КП {kp}")
@@ -333,7 +358,7 @@ async def inline_search(inline_query: types.InlineQuery):
         ))
     await inline_query.answer(results, cache_time=1)
 
-# ========== ПРОСМОТР ФИЛЬМА ==========
+# ========== ПРОСМОТР ФИЛЬМА (ИСПРАВЛЕННЫЙ) ==========
 @dp.callback_query(lambda c: c.data.startswith("watch_"))
 async def watch_movie(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -347,12 +372,31 @@ async def watch_movie(callback: types.CallbackQuery):
     video_file_id = movie[8]
     plan, end_date = get_subscription_info(user_id)
     if plan:
-        await bot.send_video(chat_id=user_id, video=video_file_id,
-                             caption=f"🎬 *{movie[1]}*\n🍿 Приятного просмотра!", parse_mode=ParseMode.MARKDOWN)
+        # Удаляем карточку фильма перед отправкой видео
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение: {e}")
+        
+        # Отправляем видео файл
+        try:
+            await bot.send_video(
+                chat_id=user_id,
+                video=video_file_id,
+                caption=f"🎬 *{movie[1]}*\n🍿 Приятного просмотра!",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки видео: {e}")
+            await bot.send_message(
+                chat_id=user_id,
+                text="❌ Не удалось загрузить видео. Возможно, файл был удалён из Telegram. Обратитесь к администратору."
+            )
         await callback.answer()
         return
 
-    await callback.message.answer(
+    # Нет подписки — редактируем текущее сообщение
+    await callback.message.edit_text(
         "🔒 *У вас нет подписки.*\nОформите доступ к фильмам:",
         reply_markup=get_tariffs_keyboard(movie_id),
         parse_mode=ParseMode.MARKDOWN
@@ -375,8 +419,9 @@ async def handle_tariff_selection(callback: types.CallbackQuery):
     plan_type = data[1]
     movie_id = int(data[2]) if len(data) > 2 else None
     prices = {"1m": "99₽", "3m": "199₽", "12m": "499₽"}
+    months = {"1m": "1", "3m": "3", "12m": "12"}
     await callback.message.edit_text(
-        f"💰 *Тариф: {plan_type[:1] if plan_type=='1m' else plan_type[:1] if plan_type=='3m' else '12'} месяц(а)*\n\n"
+        f"💰 *Тариф: {months[plan_type]} месяц(а)*\n\n"
         f"Сумма: {prices[plan_type]}\n\nВыберите способ оплаты:",
         reply_markup=get_payment_methods_keyboard(plan_type, movie_id),
         parse_mode=ParseMode.MARKDOWN
@@ -594,7 +639,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await callback.answer()
 
-# ========== КОЛБЕК "back_to_tariffs" (уже был) ==========
+# ========== КОЛБЕК "back_to_tariffs" ==========
 @dp.callback_query(lambda c: c.data == "back_to_tariffs")
 async def back_to_tariffs(callback: types.CallbackQuery):
     await callback.message.edit_text(
@@ -885,16 +930,38 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
     else:
         await show_sponsors_check(message)
 
+# ========== GRACEFUL SHUTDOWN ==========
+async def on_shutdown():
+    logger.info("Бот выключается...")
+    await bot.session.close()
+    logger.info("Сессия закрыта")
+
+def signal_handler(signum, frame):
+    logger.info(f"Получен сигнал {signum}")
+    raise SystemExit
+
 # ========== ЗАПУСК ==========
 async def main():
     init_db()
     bot_info = await bot.get_me()
-    print(f"🤖 Бот запущен: @{bot_info.username}")
-    print(f"⭐ Stars токен: {'✅' if STARS_TOKEN != 'ТВОЙ_ТОКЕН_ДЛЯ_STARS' else '❌ НЕ УСТАНОВЛЕН'}")
-    print(f"💳 ЮKassa токен: {'✅' if YUKASSA_TOKEN != 'ТВОЙ_ТОКЕН_ДЛЯ_ЮКАССЫ' else '❌ НЕ УСТАНОВЛЕН'}")
-    print(f"👑 Администраторы: {ADMIN_IDS}")
-    print("🎬 Кино-бот готов к работе!")
-    await dp.start_polling(bot)
+    logger.info(f"🤖 Бот запущен: @{bot_info.username}")
+    logger.info(f"⭐ Stars токен: {'✅' if STARS_TOKEN else '❌ НЕ УСТАНОВЛЕН'}")
+    logger.info(f"💳 ЮKassa токен: {'✅' if YUKASSA_TOKEN else '❌ НЕ УСТАНОВЛЕН'}")
+    logger.info(f"👑 Администраторы: {ADMIN_IDS}")
+    logger.info(f"💾 База данных: {DATABASE_PATH}")
+    logger.info("🎬 Кино-бот готов к работе!")
+    
+    # Регистрируем обработчики сигналов
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await on_shutdown()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен")
