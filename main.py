@@ -46,7 +46,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 SPONSOR_CHANNELS = [
     # Закрытые каналы: укажи id (для проверки) и url (ссылку-приглашение t.me/+...)
-    {"id": -1001234567890, "name": "Закрытый канал 1", "type": "closed", "url": "https://t.me/+AbCdEfGhIjKlMnOp"},
+    {"id": -1001234567890, "name": "Закрытый канал 1", "type": "closed", "url": "https://t.me/+UgEWVwVg6JUxMzNi"},
 
     # Открытые каналы: id = @username, url генерируется автоматически
     {"id": "@TMD300", "name": "Открытый канал 1", "type": "open"},
