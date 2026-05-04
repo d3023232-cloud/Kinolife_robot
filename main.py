@@ -11,9 +11,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardMarkup,
-    InlineKeyboardButton, LabeledPrice, PreCheckoutQuery
+    InlineKeyboardButton, LabeledPrice, PreCheckoutQuery, ChatJoinRequest
 )
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatMemberStatus
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -36,9 +36,18 @@ DATA_DIR = os.getenv("DATA_DIR", "/app/data")
 DATABASE_PATH = os.path.join(DATA_DIR, "cinema.db")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# ==============================================
+# КАНАЛЫ-СПОНСОРЫ
+# ==============================================
+# Формат: id канала (числовой для закрытых, @username для открытых), название, тип
+# Для закрытых каналов используй числовой ID (например -1001234567890)
+# Для открытых — @username (например @channelname)
+# Бот должен быть админом ВО ВСЕХ каналах с правом "Приглашать участников"
+
 SPONSOR_CHANNELS = [
-    {"id": "@TMD300", "name": "Спонсор 1"},
-    {"id": "@TMD033", "name": "Спонсор 2"},
+    {"id": -1003745762423, "name": "Закрытый канал 1", "type": "closed"},
+    {"id": "@TMD300", "name": "Открытый канал 1", "type": "open"},
+    {"id": "@TMD033", "name": "Открытый канал 2", "type": "open"},
 ]
 
 # ========== ЛОГИРОВАНИЕ ==========
@@ -66,9 +75,6 @@ class QuickAdd(StatesGroup):
 class DeleteMovieStates(StatesGroup):
     waiting_for_id = State()
 
-class WatchAdStates(StatesGroup):
-    waiting_for_movie = State()
-
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -83,12 +89,15 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
+
+    # Основные таблицы
     c.execute("""CREATE TABLE IF NOT EXISTS movies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT, year TEXT, rating_kp REAL, rating_imdb REAL,
         country TEXT, genres TEXT, keywords TEXT,
         description TEXT, video_file_id TEXT, created_at TIMESTAMP
     )""")
+
     c.execute("""CREATE TABLE IF NOT EXISTS subscriptions (
         user_id INTEGER PRIMARY KEY,
         plan_type TEXT,
@@ -96,11 +105,13 @@ def init_db():
         end_date TIMESTAMP,
         active BOOLEAN
     )""")
+
     c.execute("""CREATE TABLE IF NOT EXISTS payments (
         payment_id TEXT PRIMARY KEY,
         user_id INTEGER, amount INTEGER, currency TEXT,
         status TEXT, created_at TIMESTAMP
     )""")
+
     c.execute("""CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inviter_id INTEGER,
@@ -110,10 +121,38 @@ def init_db():
         rewarded_for_3 BOOLEAN DEFAULT 0,
         UNIQUE(invited_id)
     )""")
+
     c.execute("""CREATE TABLE IF NOT EXISTS ad_settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )""")
+
+    # === НОВЫЕ ТАБЛИЦЫ ДЛЯ СПОНСОРОВ ===
+    # Заявки на вступление (для закрытых каналов)
+    c.execute("""CREATE TABLE IF NOT EXISTS sponsor_join_requests (
+        user_id INTEGER,
+        channel_id TEXT,
+        requested_at TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        PRIMARY KEY (user_id, channel_id)
+    )""")
+
+    # Проверенные подписки (для открытых каналов)
+    c.execute("""CREATE TABLE IF NOT EXISTS sponsor_subscriptions (
+        user_id INTEGER,
+        channel_id TEXT,
+        checked_at TIMESTAMP,
+        is_subscribed BOOLEAN,
+        PRIMARY KEY (user_id, channel_id)
+    )""")
+
+    # Прогресс пользователей по спонсорам
+    c.execute("""CREATE TABLE IF NOT EXISTS sponsor_progress (
+        user_id INTEGER PRIMARY KEY,
+        all_completed BOOLEAN DEFAULT FALSE,
+        completed_at TIMESTAMP
+    )""")
+
     conn.commit()
     conn.close()
 
@@ -254,6 +293,84 @@ def get_active_subscriptions_count():
     conn.close()
     return count
 
+# === НОВЫЕ ФУНКЦИИ ДЛЯ СПОНСОРОВ ===
+def add_join_request(user_id: int, channel_id: str):
+    """Сохраняет заявку на вступление в закрытый канал"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""INSERT OR REPLACE INTO sponsor_join_requests 
+                 (user_id, channel_id, requested_at, status)
+                 VALUES (?, ?, ?, 'pending')""",
+              (user_id, str(channel_id), datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def has_join_request(user_id: int, channel_id: str) -> bool:
+    """Проверяет, подавал ли пользователь заявку в закрытый канал"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""SELECT 1 FROM sponsor_join_requests 
+                 WHERE user_id = ? AND channel_id = ? AND status = 'pending'""",
+              (user_id, str(channel_id)))
+    result = c.fetchone() is not None
+    conn.close()
+    return result
+
+def save_subscription_check(user_id: int, channel_id: str, is_subscribed: bool):
+    """Сохраняет результат проверки подписки на открытый канал"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""INSERT OR REPLACE INTO sponsor_subscriptions 
+                 (user_id, channel_id, checked_at, is_subscribed)
+                 VALUES (?, ?, ?, ?)""",
+              (user_id, str(channel_id), datetime.now().isoformat(), is_subscribed))
+    conn.commit()
+    conn.close()
+
+def is_subscribed_in_db(user_id: int, channel_id: str) -> bool:
+    """Проверяет из БД, подписан ли пользователь на открытый канал"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""SELECT is_subscribed FROM sponsor_subscriptions 
+                 WHERE user_id = ? AND channel_id = ?""",
+              (user_id, str(channel_id)))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else False
+
+def mark_sponsors_completed(user_id: int):
+    """Отмечает, что пользователь прошёл все спонсоров"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""INSERT OR REPLACE INTO sponsor_progress 
+                 (user_id, all_completed, completed_at)
+                 VALUES (?, TRUE, ?)""",
+              (user_id, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def is_sponsors_completed(user_id: int) -> bool:
+    """Проверяет, прошёл ли пользователь спонсоров"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT all_completed FROM sponsor_progress WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else False
+
+def get_sponsor_stats():
+    """Статистика по спонсорам для админа"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM sponsor_progress WHERE all_completed = TRUE")
+    completed = c.fetchone()[0]
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM sponsor_join_requests")
+    total_requests = c.fetchone()[0]
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM sponsor_subscriptions WHERE is_subscribed = TRUE")
+    total_subs = c.fetchone()[0]
+    conn.close()
+    return {"completed": completed, "total_requests": total_requests, "total_subs": total_subs}
+
 # ========== КЛАВИАТУРЫ ==========
 def get_tariffs_keyboard(movie_id: int = None):
     movie_param = f"_{movie_id}" if movie_id else ""
@@ -294,27 +411,92 @@ def get_partner_keyboard():
         [InlineKeyboardButton(text="🤝 Партнёрская программа", callback_data="partner_info")]
     ])
 
-# ========== ПРОВЕРКА ПОДПИСКИ НА СПОНСОРОВ ==========
-async def is_subscribed_to_sponsors(user_id: int) -> bool:
-    for ch in SPONSOR_CHANNELS:
-        channel_id = ch["id"]
-        try:
-            member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-            if member.status not in ("member", "creator", "administrator"):
-                return False
-        except Exception as e:
-            logger.error(f"Ошибка проверки {channel_id}: {e}")
-            return False
-    return True
-
-async def show_sponsors_check(message: types.Message):
-    text = "🔒 *Чтобы пользоваться ботом, подпишитесь на наших спонсоров:*\n\n"
+# === НОВАЯ КЛАВИАТУРА СПОНСОРОВ ===
+def get_sponsors_keyboard(user_id: int = None):
+    """Генерирует клавиатуру с каналами-спонсорами и кнопкой проверки"""
     keyboard = []
     for ch in SPONSOR_CHANNELS:
-        text += f"• {ch['name']}: [Подписаться](https://t.me/{ch['id'].lstrip('@')})\n"
-        keyboard.append([InlineKeyboardButton(text=f"📢 {ch['name']}", url=f"https://t.me/{ch['id'].lstrip('@')}")])
-    keyboard.append([InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sponsors")])
-    await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+        channel_id = ch["id"]
+        name = ch["name"]
+
+        # Формируем ссылку на канал
+        if isinstance(channel_id, str) and channel_id.startswith("@"):
+            # Открытый канал по юзернейму
+            url = f"https://t.me/{channel_id.lstrip('@')}"
+        elif isinstance(channel_id, int):
+            # Закрытый канал — используем t.me/c/ID (без -100)
+            url = f"https://t.me/c/{str(channel_id)[4:]}"
+        else:
+            url = f"https://t.me/{str(channel_id).lstrip('@')}"
+
+        keyboard.append([InlineKeyboardButton(text=f"📢 {name}", url=url)])
+
+    keyboard.append([InlineKeyboardButton(text="✅ Проверить подписки", callback_data="check_sponsors")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+# ========== ПРОВЕРКА ПОДПИСОК НА СПОНСОРОВ ==========
+async def check_single_channel(user_id: int, channel: dict) -> tuple[bool, str]:
+    """
+    Проверяет один канал. Возвращает (успех, статус_текст)
+    Для открытых: проверяет get_chat_member
+    Для закрытых: проверяет заявку в БД + fallback get_chat_member
+    """
+    channel_id = channel["id"]
+    channel_name = channel["name"]
+    channel_type = channel.get("type", "open")
+
+    # Сначала пробуем get_chat_member (работает для обоих типов если бот админ)
+    try:
+        member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR):
+            # Пользователь уже в канале
+            if channel_type == "open":
+                save_subscription_check(user_id, str(channel_id), True)
+            return True, f"✅ {channel_name}"
+    except Exception as e:
+        logger.debug(f"get_chat_member не сработал для {channel_id}: {e}")
+
+    # Для закрытых каналов проверяем заявку
+    if channel_type == "closed":
+        if has_join_request(user_id, str(channel_id)):
+            return True, f"⏳ {channel_name} — заявка подана"
+
+    # Для открытых проверяем БД (если раньше проверяли)
+    if channel_type == "open":
+        if is_subscribed_in_db(user_id, str(channel_id)):
+            # Повторная проверка — пользователь мог отписаться
+            # Но мы доверяем последней проверке get_chat_member выше
+            pass
+
+    return False, f"❌ {channel_name} — не подписан"
+
+async def check_all_sponsors(user_id: int) -> tuple[bool, list[str]]:
+    """
+    Проверяет все каналы-спонсоры. 
+    Возвращает (все_ли_пройдены, список_результатов)
+    """
+    results = []
+    all_good = True
+
+    for channel in SPONSOR_CHANNELS:
+        success, text = await check_single_channel(user_id, channel)
+        results.append(text)
+        if not success:
+            all_good = False
+
+    return all_good, results
+
+async def show_sponsors_check(message: types.Message):
+    """Показывает сообщение с кнопками спонсоров"""
+    text = (
+        "🔒 *Чтобы пользоваться ботом, подпишитесь на наших спонсоров:*
+
+"
+        "1. Нажмите на кнопки ниже и подпишитесь/подайте заявку во все каналы
+"
+        "2. Вернитесь сюда и нажмите *✅ Проверить подписки*"
+    )
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_sponsors_keyboard())
 
 # ========== INLINE ПОИСК ==========
 @dp.inline_query()
@@ -339,9 +521,12 @@ async def inline_search(inline_query: types.InlineQuery):
             description=description,
             input_message_content=InputTextMessageContent(
                 message_text=(
-                    f"🎬 *{title}* ({year or '—'})\n"
-                    f"⭐ КП: {kp or '?'} | IMDb: {imdb or '?'}\n"
-                    f"🌍 {country or 'неизвестно'}\n"
+                    f"🎬 *{title}* ({year or '—'})
+"
+                    f"⭐ КП: {kp or '?'} | IMDb: {imdb or '?'}
+"
+                    f"🌍 {country or 'неизвестно'}
+"
                     f"🎭 {genres or '—'}"
                 ),
                 parse_mode=ParseMode.MARKDOWN
@@ -354,22 +539,21 @@ async def inline_search(inline_query: types.InlineQuery):
         ))
     await inline_query.answer(results, cache_time=1)
 
-# ========== ПРОСМОТР ФИЛЬМА (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ==========
+# ========== ПРОСМОТР ФИЛЬМА ==========
 @dp.callback_query(lambda c: c.data.startswith("watch_"))
 async def watch_movie(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     movie_id = int(callback.data.split("_")[1])
     movie = get_movie_by_id(movie_id)
-    
+
     if not movie:
         await callback.answer("❌ Фильм не найден", show_alert=True)
         return
 
     video_file_id = movie[8]
     plan, end_date = get_subscription_info(user_id)
-    
+
     if plan:
-        # Есть подписка — редактируем сообщение на "Загрузка..." и отправляем видео
         try:
             await callback.message.edit_text(
                 "⏳ *Загружаю видео...*",
@@ -377,16 +561,15 @@ async def watch_movie(callback: types.CallbackQuery):
             )
         except Exception as e:
             logger.warning(f"Не удалось редактировать сообщение: {e}")
-        
-        # Отправляем видео в тот же чат, где было сообщение
+
         try:
             await bot.send_video(
                 chat_id=callback.message.chat.id,
                 video=video_file_id,
-                caption=f"🎬 *{movie[1]}*\n🍿 Приятного просмотра!",
+                caption=f"🎬 *{movie[1]}*
+🍿 Приятного просмотра!",
                 parse_mode=ParseMode.MARKDOWN
             )
-            # Удаляем сообщение "Загрузка..."
             try:
                 await callback.message.delete()
             except Exception as e:
@@ -394,16 +577,17 @@ async def watch_movie(callback: types.CallbackQuery):
         except Exception as e:
             logger.error(f"Ошибка отправки видео: {e}")
             await callback.message.edit_text(
-                "❌ *Не удалось загрузить видео.*\nВозможно, файл был удалён из Telegram. Обратитесь к администратору.",
+                "❌ *Не удалось загрузить видео.*
+Возможно, файл был удалён из Telegram. Обратитесь к администратору.",
                 parse_mode=ParseMode.MARKDOWN
             )
-        
+
         await callback.answer()
         return
 
-    # Нет подписки — редактируем текущее сообщение
     await callback.message.edit_text(
-        "🔒 *У вас нет подписки.*\nОформите доступ к фильмам:",
+        "🔒 *У вас нет подписки.*
+Оформите доступ к фильмам:",
         reply_markup=get_tariffs_keyboard(movie_id),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -413,7 +597,9 @@ async def watch_movie(callback: types.CallbackQuery):
 async def buy_subscription(callback: types.CallbackQuery):
     movie_id = int(callback.data.split("_")[2])
     await callback.message.edit_text(
-        "💳 *Магазин подписок*\n\nВыберите тариф на 1, 3 или 12 месяцев:",
+        "💳 *Магазин подписок*
+
+Выберите тариф на 1, 3 или 12 месяцев:",
         reply_markup=get_tariffs_keyboard(movie_id),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -427,8 +613,12 @@ async def handle_tariff_selection(callback: types.CallbackQuery):
     prices = {"1m": "99₽", "3m": "199₽", "12m": "499₽"}
     months = {"1m": "1", "3m": "3", "12m": "12"}
     await callback.message.edit_text(
-        f"💰 *Тариф: {months[plan_type]} месяц(а)*\n\n"
-        f"Сумма: {prices[plan_type]}\n\nВыберите способ оплаты:",
+        f"💰 *Тариф: {months[plan_type]} месяц(а)*
+
+"
+        f"Сумма: {prices[plan_type]}
+
+Выберите способ оплаты:",
         reply_markup=get_payment_methods_keyboard(plan_type, movie_id),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -437,7 +627,9 @@ async def handle_tariff_selection(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "show_tariffs")
 async def show_tariffs(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "💳 *Магазин подписок*\n\nВыберите тариф:",
+        "💳 *Магазин подписок*
+
+Выберите тариф:",
         reply_markup=get_tariffs_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -520,9 +712,15 @@ async def process_payment(message: types.Message):
     reward_inviter_on_purchase(user_id)
     method = "Telegram Stars" if payment_type == "stars" else "ЮKassa"
     await message.answer(
-        f"✅ *Оплата через {method} прошла успешно!*\n\n"
-        f"Подписка на {days} дней активирована.\n\n"
-        f"🍿 *Приятного просмотра!*\n\n"
+        f"✅ *Оплата через {method} прошла успешно!*
+
+"
+        f"Подписка на {days} дней активирована.
+
+"
+        f"🍿 *Приятного просмотра!*
+
+"
         f"👇 Нажмите кнопку, чтобы начать поиск:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -545,11 +743,20 @@ async def partner_info(callback: types.CallbackQuery):
     conn.close()
     bonus_text = "✅ Бонус за 3 приглашения получен" if bonus_3 else "⏳ Бонус ещё не получен"
     text = (
-        f"🎁 *Партнёрская программа*\n\n"
-        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!\n"
-        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.\n\n"
-        f"Твоя реферальная ссылка:\n`{invite_link}`\n\n"
-        f"Количество приглашённых: {invites_count}/3\n"
+        f"🎁 *Партнёрская программа*
+
+"
+        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!
+"
+        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.
+
+"
+        f"Твоя реферальная ссылка:
+`{invite_link}`
+
+"
+        f"Количество приглашённых: {invites_count}/3
+"
         f"Статус бонуса: {bonus_text}"
     )
     await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_partner_keyboard())
@@ -568,32 +775,103 @@ async def cmd_referral(message: types.Message):
     conn.close()
     bonus_text = "✅ Бонус за 3 приглашения получен" if bonus_3 else "⏳ Бонус ещё не получен"
     text = (
-        f"🎁 *Партнёрская программа*\n\n"
-        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!\n"
-        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.\n\n"
-        f"Твоя реферальная ссылка:\n`{invite_link}`\n\n"
-        f"Количество приглашённых: {invites_count}/3\n"
+        f"🎁 *Партнёрская программа*
+
+"
+        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!
+"
+        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.
+
+"
+        f"Твоя реферальная ссылка:
+`{invite_link}`
+
+"
+        f"Количество приглашённых: {invites_count}/3
+"
         f"Статус бонуса: {bonus_text}"
     )
     await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_partner_keyboard())
 
-# ========== ПРОВЕРКА ПОДПИСКИ НА СПОНСОРОВ (callback) ==========
+# ========== ОБРАБОТКА ЗАЯВОК В ЗАКРЫТЫЕ КАНАЛЫ ==========
+@dp.chat_join_request()
+async def handle_join_request(request: ChatJoinRequest):
+    """Срабатывает, когда пользователь подаёт заявку в канал-спонсор"""
+    user_id = request.from_user.id
+    channel_id = request.chat.id
+    channel_name = request.chat.title or str(channel_id)
+
+    logger.info(f"Заявка на вступление: user={user_id}, channel={channel_id} ({channel_name})")
+
+    # Сохраняем заявку в БД
+    add_join_request(user_id, str(channel_id))
+
+    # Можно сразу одобрить заявку (раскомментируй если нужно авто-одобрение)
+    # try:
+    #     await request.approve()
+    #     logger.info(f"Заявка от {user_id} в {channel_id} одобрена автоматически")
+    # except Exception as e:
+    #     logger.error(f"Ошибка авто-одобрения: {e}")
+
+# ========== ПРОВЕРКА ПОДПИСОК НА СПОНСОРОВ (callback) ==========
 @dp.callback_query(lambda c: c.data == "check_sponsors")
 async def check_sponsors_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    if await is_subscribed_to_sponsors(user_id):
-        await show_main_menu(callback.message, user_id)
-        await callback.message.delete()
+
+    # Проверяем все каналы
+    all_good, results = await check_all_sponsors(user_id)
+
+    if all_good:
+        # Все спонсоры пройдены
+        mark_sponsors_completed(user_id)
+
+        # Формируем текст успеха
+        text = (
+            "🎉 *Все подписки оформлены!*
+
+"
+            "✅ Теперь у вас полный доступ к боту.
+
+"
+            "👇 Нажмите кнопку ниже, чтобы начать:"
+        )
+
+        await callback.message.edit_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_main_menu_keyboard()
+        )
+        await callback.answer("✅ Проверка пройдена!")
     else:
-        await callback.answer("❌ Вы не подписаны на всех спонсоров. Подпишитесь и нажмите снова.", show_alert=True)
+        # Не все подписки оформлены
+        text = (
+            "📊 *Результат проверки:*
+
+"
+            + "
+".join(results)
+            + "
+
+⚠️ *Подпишитесь на все каналы и нажмите проверить снова.*"
+        )
+
+        await callback.message.edit_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_sponsors_keyboard()
+        )
+        await callback.answer("❌ Не все подписки оформлены", show_alert=True)
 
 # ========== ГЛАВНОЕ МЕНЮ ==========
 async def show_main_menu(message: types.Message, user_id: int):
     name = message.from_user.first_name
     text = (
-        f"Привет, {name}! 🎬\n"
-        "Этот бот — твой личный кинотеатр.\n"
-        "Чтобы найти фильм, сериал или кино, используй кнопку ниже.\n"
+        f"Привет, {name}! 🎬
+"
+        "Этот бот — твой личный кинотеатр.
+"
+        "Чтобы найти фильм, сериал или кино, используй кнопку ниже.
+"
         "Нажми «🔍 Начать поиск», введи название и выбирай из результатов."
     )
     await message.answer(text, reply_markup=get_main_menu_keyboard())
@@ -606,7 +884,11 @@ async def check_subscription_callback(callback: types.CallbackQuery):
     if plan:
         days_left = (end_date - datetime.now()).days
         await callback.message.answer(
-            f"✅ *Подписка активна*\n\n📅 Тариф: {plan}\n⏰ Осталось дней: {days_left}\n📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
+            f"✅ *Подписка активна*
+
+📅 Тариф: {plan}
+⏰ Осталось дней: {days_left}
+📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💎 Продлить подписку", callback_data="show_tariffs")]
@@ -627,7 +909,11 @@ async def cmd_status(message: types.Message):
     if plan:
         days_left = (end_date - datetime.now()).days
         await message.answer(
-            f"✅ *Подписка активна*\n\n📅 Тариф: {plan}\n⏰ Осталось дней: {days_left}\n📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
+            f"✅ *Подписка активна*
+
+📅 Тариф: {plan}
+⏰ Осталось дней: {days_left}
+📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
             parse_mode=ParseMode.MARKDOWN
         )
     else:
@@ -642,14 +928,19 @@ async def cmd_status(message: types.Message):
 async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await show_main_menu(callback.message, callback.from_user.id)
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except:
+        pass
     await callback.answer()
 
 # ========== КОЛБЕК "back_to_tariffs" ==========
 @dp.callback_query(lambda c: c.data == "back_to_tariffs")
 async def back_to_tariffs(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "💳 *Магазин подписок*\n\nВыберите тариф:",
+        "💳 *Магазин подписок*
+
+Выберите тариф:",
         reply_markup=get_tariffs_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -666,10 +957,45 @@ async def admin_panel(message: types.Message, state: FSMContext):
         return
     await state.clear()
     await message.answer(
-        "🔐 *Админ-панель*\n\nВыберите действие:",
+        "🔐 *Админ-панель*
+
+Выберите действие:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_admin_keyboard()
     )
+
+# ========== КОМАНДА /stats (НОВАЯ) ==========
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    """Команда /stats для админа — показывает полную статистику"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔ У вас нет доступа к этой команде")
+        return
+
+    # Собираем статистику
+    movies_count = get_movies_count()
+    subs_count = get_active_subscriptions_count()
+    sponsor_stats = get_sponsor_stats()
+
+    text = (
+        "📊 *Полная статистика бота*
+
+"
+        f"🎬 Фильмов в базе: {movies_count}
+"
+        f"👥 Активных подписок: {subs_count}
+
+"
+        f"📢 *Спонсоры:*
+"
+        f"✅ Прошли проверку: {sponsor_stats['completed']}
+"
+        f"📝 Заявок подано: {sponsor_stats['total_requests']}
+"
+        f"🔗 Подписок оформлено: {sponsor_stats['total_subs']}"
+    )
+
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
 # ========== КОМАНДА /add (вызов добавления) ==========
 @dp.message(Command("add"))
@@ -679,7 +1005,9 @@ async def quick_add_start(message: types.Message, state: FSMContext):
         return
     await state.clear()
     await message.answer(
-        "🎬 *Добавление фильма*\n\nОтправьте видео (файлом) или напишите `file_id`, если он уже есть.",
+        "🎬 *Добавление фильма*
+
+Отправьте видео (файлом) или напишите `file_id`, если он уже есть.",
         parse_mode="Markdown"
     )
     await state.set_state(QuickAdd.waiting_for_file_id)
@@ -693,7 +1021,9 @@ async def admin_add_movie_callback(callback: types.CallbackQuery, state: FSMCont
     await callback.answer()
     await state.clear()
     await callback.message.answer(
-        "🎬 *Добавление фильма*\n\nОтправьте видео (файлом) или напишите `file_id`, если он уже есть.",
+        "🎬 *Добавление фильма*
+
+Отправьте видео (файлом) или напишите `file_id`, если он уже есть.",
         parse_mode="Markdown"
     )
     await state.set_state(QuickAdd.waiting_for_file_id)
@@ -706,7 +1036,10 @@ async def quick_add_file_id(message: types.Message, state: FSMContext):
 
     if message.video:
         file_id = message.video.file_id
-        await message.answer(f"✅ Видео получено, `file_id`:\n`{file_id}`\n\nТеперь введите *ключевые слова* через запятую:", parse_mode="Markdown")
+        await message.answer(f"✅ Видео получено, `file_id`:
+`{file_id}`
+
+Теперь введите *ключевые слова* через запятую:", parse_mode="Markdown")
     else:
         file_id = message.text.strip()
         if len(file_id) < 20:
@@ -820,10 +1153,15 @@ async def quick_add_rating_imdb(message: types.Message, state: FSMContext):
     conn.close()
 
     await message.answer(
-        f"✅ *Фильм добавлен!*\n"
-        f"🎬 {data['title']} ({data.get('year', '—')})\n"
-        f"🆔 ID: `{movie_id}`\n"
-        f"🔑 Ключевые слова: `{data['keywords']}`\n\n"
+        f"✅ *Фильм добавлен!*
+"
+        f"🎬 {data['title']} ({data.get('year', '—')})
+"
+        f"🆔 ID: `{movie_id}`
+"
+        f"🔑 Ключевые слова: `{data['keywords']}`
+
+"
         f"Теперь он доступен в поиске.",
         parse_mode="Markdown"
     )
@@ -837,8 +1175,28 @@ async def admin_stats(callback: types.CallbackQuery):
         return
     movies_count = get_movies_count()
     subs_count = get_active_subscriptions_count()
+    sponsor_stats = get_sponsor_stats()
+
+    text = (
+        f"📊 *Статистика*
+
+"
+        f"🎬 Фильмов в базе: {movies_count}
+"
+        f"👥 Активных подписок: {subs_count}
+
+"
+        f"📢 *Спонсоры:*
+"
+        f"✅ Прошли проверку: {sponsor_stats['completed']}
+"
+        f"📝 Заявок подано: {sponsor_stats['total_requests']}
+"
+        f"🔗 Подписок оформлено: {sponsor_stats['total_subs']}"
+    )
+
     await callback.message.edit_text(
-        f"📊 *Статистика*\n\n🎬 Фильмов в базе: {movies_count}\n👥 Активных подписок: {subs_count}",
+        text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
@@ -861,11 +1219,15 @@ async def admin_list_movies(callback: types.CallbackQuery):
         )
         await callback.answer()
         return
-    text = "📋 *Список фильмов (новые сверху):*\n\n"
+    text = "📋 *Список фильмов (новые сверху):*
+
+"
     for movie in movies[:20]:
-        text += f"🎬 ID: `{movie[0]}` | {movie[1]} ({movie[2]})\n"
+        text += f"🎬 ID: `{movie[0]}` | {movie[1]} ({movie[2]})
+"
     if len(movies) > 20:
-        text += f"\n...и ещё {len(movies) - 20} фильмов"
+        text += f"
+...и ещё {len(movies) - 20} фильмов"
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
@@ -882,7 +1244,9 @@ async def admin_delete_movie_prompt(callback: types.CallbackQuery, state: FSMCon
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     await callback.message.edit_text(
-        "🗑 *Удаление фильма*\n\nВведите ID фильма, который нужно удалить.",
+        "🗑 *Удаление фильма*
+
+Введите ID фильма, который нужно удалить.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
@@ -912,7 +1276,9 @@ async def process_delete_movie(message: types.Message, state: FSMContext):
 async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
-        "🔐 *Админ-панель*\n\nВыберите действие:",
+        "🔐 *Админ-панель*
+
+Выберите действие:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_admin_keyboard()
     )
@@ -931,10 +1297,19 @@ async def cmd_start(message: types.Message, command: CommandObject, state: FSMCo
                 add_referral(inviter_id, user_id)
         except:
             pass
-    if await is_subscribed_to_sponsors(user_id):
+
+    # Проверяем, прошёл ли пользователь спонсоров
+    if is_sponsors_completed(user_id):
+        # Уже проходил — показываем главное меню
         await show_main_menu(message, user_id)
     else:
-        await show_sponsors_check(message)
+        # Проверяем, может уже подписан (fallback)
+        all_good, _ = await check_all_sponsors(user_id)
+        if all_good:
+            mark_sponsors_completed(user_id)
+            await show_main_menu(message, user_id)
+        else:
+            await show_sponsors_check(message)
 
 # ========== GRACEFUL SHUTDOWN ==========
 async def on_shutdown():
@@ -955,11 +1330,12 @@ async def main():
     logger.info(f"💳 ЮKassa токен: {'✅' if YUKASSA_TOKEN else '❌ НЕ УСТАНОВЛЕН'}")
     logger.info(f"👑 Администраторы: {ADMIN_IDS}")
     logger.info(f"💾 База данных: {DATABASE_PATH}")
+    logger.info(f"📢 Каналов-спонсоров: {len(SPONSOR_CHANNELS)}")
     logger.info("🎬 Кино-бот готов к работе!")
-    
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     try:
         await dp.start_polling(bot)
     finally:
