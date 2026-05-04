@@ -45,7 +45,10 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Бот должен быть админом ВО ВСЕХ каналах с правом "Приглашать участников"
 
 SPONSOR_CHANNELS = [
-    {"id": -1003745762423, "name": "Закрытый канал 1", "type": "closed"},
+    # Закрытые каналы: укажи id (для проверки) и url (ссылку-приглашение t.me/+...)
+    {"id": -1001234567890, "name": "Закрытый канал 1", "type": "closed", "url": "https://t.me/+AbCdEfGhIjKlMnOp"},
+
+    # Открытые каналы: id = @username, url генерируется автоматически
     {"id": "@TMD300", "name": "Открытый канал 1", "type": "open"},
     {"id": "@TMD033", "name": "Открытый канал 2", "type": "open"},
 ]
@@ -421,13 +424,16 @@ def get_sponsors_keyboard(user_id: int = None):
     for ch in SPONSOR_CHANNELS:
         channel_id = ch["id"]
         name = ch["name"]
+        channel_type = ch.get("type", "open")
 
-        # Формируем ссылку на канал
-        if isinstance(channel_id, str) and channel_id.startswith("@"):
+        # Если url указан в конфиге — используем его (для закрытых каналов с приглашением)
+        if "url" in ch and ch["url"]:
+            url = ch["url"]
+        elif isinstance(channel_id, str) and channel_id.startswith("@"):
             # Открытый канал по юзернейму
             url = f"https://t.me/{channel_id.lstrip('@')}"
         elif isinstance(channel_id, int):
-            # Закрытый канал — используем t.me/c/ID (без -100)
+            # Закрытый канал без ссылки — используем t.me/c/ID (может не работать без публичной ссылки!)
             url = f"https://t.me/c/{str(channel_id)[4:]}"
         else:
             url = f"https://t.me/{str(channel_id).lstrip('@')}"
