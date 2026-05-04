@@ -156,6 +156,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def extend_subscription(user_id: int, days: int, plan_type: str = "bonus"):
     conn = get_db_connection()
     c = conn.cursor()
@@ -293,6 +294,7 @@ def get_active_subscriptions_count():
     conn.close()
     return count
 
+
 # === НОВЫЕ ФУНКЦИИ ДЛЯ СПОНСОРОВ ===
 def add_join_request(user_id: int, channel_id: str):
     """Сохраняет заявку на вступление в закрытый канал"""
@@ -371,6 +373,7 @@ def get_sponsor_stats():
     conn.close()
     return {"completed": completed, "total_requests": total_requests, "total_subs": total_subs}
 
+
 # ========== КЛАВИАТУРЫ ==========
 def get_tariffs_keyboard(movie_id: int = None):
     movie_param = f"_{movie_id}" if movie_id else ""
@@ -434,6 +437,7 @@ def get_sponsors_keyboard(user_id: int = None):
     keyboard.append([InlineKeyboardButton(text="✅ Проверить подписки", callback_data="check_sponsors")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
 # ========== ПРОВЕРКА ПОДПИСОК НА СПОНСОРОВ ==========
 async def check_single_channel(user_id: int, channel: dict) -> tuple[bool, str]:
     """
@@ -488,15 +492,11 @@ async def check_all_sponsors(user_id: int) -> tuple[bool, list[str]]:
 
 async def show_sponsors_check(message: types.Message):
     """Показывает сообщение с кнопками спонсоров"""
-    text = (
-        "🔒 *Чтобы пользоваться ботом, подпишитесь на наших спонсоров:*
-
-"
-        "1. Нажмите на кнопки ниже и подпишитесь/подайте заявку во все каналы
-"
-        "2. Вернитесь сюда и нажмите *✅ Проверить подписки*"
-    )
+    text = "🔒 *Чтобы пользоваться ботом, подпишитесь на наших спонсоров:*\n\n"
+    text += "1. Нажмите на кнопки ниже и подпишитесь/подайте заявку во все каналы\n"
+    text += "2. Вернитесь сюда и нажмите *✅ Проверить подписки*"
     await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_sponsors_keyboard())
+
 
 # ========== INLINE ПОИСК ==========
 @dp.inline_query()
@@ -521,12 +521,9 @@ async def inline_search(inline_query: types.InlineQuery):
             description=description,
             input_message_content=InputTextMessageContent(
                 message_text=(
-                    f"🎬 *{title}* ({year or '—'})
-"
-                    f"⭐ КП: {kp or '?'} | IMDb: {imdb or '?'}
-"
-                    f"🌍 {country or 'неизвестно'}
-"
+                    f"🎬 *{title}* ({year or '—'})\n"
+                    f"⭐ КП: {kp or '?'} | IMDb: {imdb or '?'}\n"
+                    f"🌍 {country or 'неизвестно'}\n"
                     f"🎭 {genres or '—'}"
                 ),
                 parse_mode=ParseMode.MARKDOWN
@@ -538,6 +535,7 @@ async def inline_search(inline_query: types.InlineQuery):
             ])
         ))
     await inline_query.answer(results, cache_time=1)
+
 
 # ========== ПРОСМОТР ФИЛЬМА ==========
 @dp.callback_query(lambda c: c.data.startswith("watch_"))
@@ -566,8 +564,7 @@ async def watch_movie(callback: types.CallbackQuery):
             await bot.send_video(
                 chat_id=callback.message.chat.id,
                 video=video_file_id,
-                caption=f"🎬 *{movie[1]}*
-🍿 Приятного просмотра!",
+                caption=f"🎬 *{movie[1]}*\n🍿 Приятного просмотра!",
                 parse_mode=ParseMode.MARKDOWN
             )
             try:
@@ -577,8 +574,7 @@ async def watch_movie(callback: types.CallbackQuery):
         except Exception as e:
             logger.error(f"Ошибка отправки видео: {e}")
             await callback.message.edit_text(
-                "❌ *Не удалось загрузить видео.*
-Возможно, файл был удалён из Telegram. Обратитесь к администратору.",
+                "❌ *Не удалось загрузить видео.*\nВозможно, файл был удалён из Telegram. Обратитесь к администратору.",
                 parse_mode=ParseMode.MARKDOWN
             )
 
@@ -586,8 +582,7 @@ async def watch_movie(callback: types.CallbackQuery):
         return
 
     await callback.message.edit_text(
-        "🔒 *У вас нет подписки.*
-Оформите доступ к фильмам:",
+        "🔒 *У вас нет подписки.*\nОформите доступ к фильмам:",
         reply_markup=get_tariffs_keyboard(movie_id),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -597,9 +592,7 @@ async def watch_movie(callback: types.CallbackQuery):
 async def buy_subscription(callback: types.CallbackQuery):
     movie_id = int(callback.data.split("_")[2])
     await callback.message.edit_text(
-        "💳 *Магазин подписок*
-
-Выберите тариф на 1, 3 или 12 месяцев:",
+        "💳 *Магазин подписок*\n\nВыберите тариф на 1, 3 или 12 месяцев:",
         reply_markup=get_tariffs_keyboard(movie_id),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -613,12 +606,8 @@ async def handle_tariff_selection(callback: types.CallbackQuery):
     prices = {"1m": "99₽", "3m": "199₽", "12m": "499₽"}
     months = {"1m": "1", "3m": "3", "12m": "12"}
     await callback.message.edit_text(
-        f"💰 *Тариф: {months[plan_type]} месяц(а)*
-
-"
-        f"Сумма: {prices[plan_type]}
-
-Выберите способ оплаты:",
+        f"💰 *Тариф: {months[plan_type]} месяц(а)*\n\n"
+        f"Сумма: {prices[plan_type]}\n\nВыберите способ оплаты:",
         reply_markup=get_payment_methods_keyboard(plan_type, movie_id),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -627,13 +616,12 @@ async def handle_tariff_selection(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "show_tariffs")
 async def show_tariffs(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "💳 *Магазин подписок*
-
-Выберите тариф:",
+        "💳 *Магазин подписок*\n\nВыберите тариф:",
         reply_markup=get_tariffs_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
     await callback.answer()
+
 
 @dp.callback_query(lambda c: c.data.startswith("pay_stars_"))
 async def pay_with_stars(callback: types.CallbackQuery):
@@ -712,15 +700,9 @@ async def process_payment(message: types.Message):
     reward_inviter_on_purchase(user_id)
     method = "Telegram Stars" if payment_type == "stars" else "ЮKassa"
     await message.answer(
-        f"✅ *Оплата через {method} прошла успешно!*
-
-"
-        f"Подписка на {days} дней активирована.
-
-"
-        f"🍿 *Приятного просмотра!*
-
-"
+        f"✅ *Оплата через {method} прошла успешно!*\n\n"
+        f"Подписка на {days} дней активирована.\n\n"
+        f"🍿 *Приятного просмотра!*\n\n"
         f"👇 Нажмите кнопку, чтобы начать поиск:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -728,6 +710,7 @@ async def process_payment(message: types.Message):
             [InlineKeyboardButton(text="📊 Проверить статус", callback_data="check_subscription")]
         ])
     )
+
 
 # ========== ПАРТНЁРСКАЯ ПРОГРАММА ==========
 @dp.callback_query(lambda c: c.data == "partner_info")
@@ -743,20 +726,11 @@ async def partner_info(callback: types.CallbackQuery):
     conn.close()
     bonus_text = "✅ Бонус за 3 приглашения получен" if bonus_3 else "⏳ Бонус ещё не получен"
     text = (
-        f"🎁 *Партнёрская программа*
-
-"
-        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!
-"
-        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.
-
-"
-        f"Твоя реферальная ссылка:
-`{invite_link}`
-
-"
-        f"Количество приглашённых: {invites_count}/3
-"
+        f"🎁 *Партнёрская программа*\n\n"
+        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!\n"
+        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.\n\n"
+        f"Твоя реферальная ссылка:\n`{invite_link}`\n\n"
+        f"Количество приглашённых: {invites_count}/3\n"
         f"Статус бонуса: {bonus_text}"
     )
     await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_partner_keyboard())
@@ -775,23 +749,15 @@ async def cmd_referral(message: types.Message):
     conn.close()
     bonus_text = "✅ Бонус за 3 приглашения получен" if bonus_3 else "⏳ Бонус ещё не получен"
     text = (
-        f"🎁 *Партнёрская программа*
-
-"
-        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!
-"
-        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.
-
-"
-        f"Твоя реферальная ссылка:
-`{invite_link}`
-
-"
-        f"Количество приглашённых: {invites_count}/3
-"
+        f"🎁 *Партнёрская программа*\n\n"
+        f"Пригласи 3 друзей – получи 1 день VIP бесплатно!\n"
+        f"Если хотя бы один из приглашённых купит подписку – ты получишь месяц VIP в подарок.\n\n"
+        f"Твоя реферальная ссылка:\n`{invite_link}`\n\n"
+        f"Количество приглашённых: {invites_count}/3\n"
         f"Статус бонуса: {bonus_text}"
     )
     await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_partner_keyboard())
+
 
 # ========== ОБРАБОТКА ЗАЯВОК В ЗАКРЫТЫЕ КАНАЛЫ ==========
 @dp.chat_join_request()
@@ -813,6 +779,7 @@ async def handle_join_request(request: ChatJoinRequest):
     # except Exception as e:
     #     logger.error(f"Ошибка авто-одобрения: {e}")
 
+
 # ========== ПРОВЕРКА ПОДПИСОК НА СПОНСОРОВ (callback) ==========
 @dp.callback_query(lambda c: c.data == "check_sponsors")
 async def check_sponsors_callback(callback: types.CallbackQuery):
@@ -827,12 +794,8 @@ async def check_sponsors_callback(callback: types.CallbackQuery):
 
         # Формируем текст успеха
         text = (
-            "🎉 *Все подписки оформлены!*
-
-"
-            "✅ Теперь у вас полный доступ к боту.
-
-"
+            "🎉 *Все подписки оформлены!*\n\n"
+            "✅ Теперь у вас полный доступ к боту.\n\n"
             "👇 Нажмите кнопку ниже, чтобы начать:"
         )
 
@@ -844,16 +807,9 @@ async def check_sponsors_callback(callback: types.CallbackQuery):
         await callback.answer("✅ Проверка пройдена!")
     else:
         # Не все подписки оформлены
-        text = (
-            "📊 *Результат проверки:*
-
-"
-            + "
-".join(results)
-            + "
-
-⚠️ *Подпишитесь на все каналы и нажмите проверить снова.*"
-        )
+        text = "📊 *Результат проверки:*\n\n"
+        text += "\n".join(results)
+        text += "\n\n⚠️ *Подпишитесь на все каналы и нажмите проверить снова.*"
 
         await callback.message.edit_text(
             text,
@@ -862,16 +818,14 @@ async def check_sponsors_callback(callback: types.CallbackQuery):
         )
         await callback.answer("❌ Не все подписки оформлены", show_alert=True)
 
+
 # ========== ГЛАВНОЕ МЕНЮ ==========
 async def show_main_menu(message: types.Message, user_id: int):
     name = message.from_user.first_name
     text = (
-        f"Привет, {name}! 🎬
-"
-        "Этот бот — твой личный кинотеатр.
-"
-        "Чтобы найти фильм, сериал или кино, используй кнопку ниже.
-"
+        f"Привет, {name}! 🎬\n"
+        "Этот бот — твой личный кинотеатр.\n"
+        "Чтобы найти фильм, сериал или кино, используй кнопку ниже.\n"
         "Нажми «🔍 Начать поиск», введи название и выбирай из результатов."
     )
     await message.answer(text, reply_markup=get_main_menu_keyboard())
@@ -884,11 +838,7 @@ async def check_subscription_callback(callback: types.CallbackQuery):
     if plan:
         days_left = (end_date - datetime.now()).days
         await callback.message.answer(
-            f"✅ *Подписка активна*
-
-📅 Тариф: {plan}
-⏰ Осталось дней: {days_left}
-📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
+            f"✅ *Подписка активна*\n\n📅 Тариф: {plan}\n⏰ Осталось дней: {days_left}\n📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💎 Продлить подписку", callback_data="show_tariffs")]
@@ -909,11 +859,7 @@ async def cmd_status(message: types.Message):
     if plan:
         days_left = (end_date - datetime.now()).days
         await message.answer(
-            f"✅ *Подписка активна*
-
-📅 Тариф: {plan}
-⏰ Осталось дней: {days_left}
-📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
+            f"✅ *Подписка активна*\n\n📅 Тариф: {plan}\n⏰ Осталось дней: {days_left}\n📆 Действует до: {end_date.strftime('%d.%m.%Y')}",
             parse_mode=ParseMode.MARKDOWN
         )
     else:
@@ -938,13 +884,12 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "back_to_tariffs")
 async def back_to_tariffs(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "💳 *Магазин подписок*
-
-Выберите тариф:",
+        "💳 *Магазин подписок*\n\nВыберите тариф:",
         reply_markup=get_tariffs_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
     await callback.answer()
+
 
 # ===========================================
 #   АДМИН‑ПАНЕЛЬ И ДОБАВЛЕНИЕ ФИЛЬМОВ
@@ -957,9 +902,7 @@ async def admin_panel(message: types.Message, state: FSMContext):
         return
     await state.clear()
     await message.answer(
-        "🔐 *Админ-панель*
-
-Выберите действие:",
+        "🔐 *Админ-панель*\n\nВыберите действие:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_admin_keyboard()
     )
@@ -978,24 +921,17 @@ async def cmd_stats(message: types.Message):
     sponsor_stats = get_sponsor_stats()
 
     text = (
-        "📊 *Полная статистика бота*
-
-"
-        f"🎬 Фильмов в базе: {movies_count}
-"
-        f"👥 Активных подписок: {subs_count}
-
-"
-        f"📢 *Спонсоры:*
-"
-        f"✅ Прошли проверку: {sponsor_stats['completed']}
-"
-        f"📝 Заявок подано: {sponsor_stats['total_requests']}
-"
+        "📊 *Полная статистика бота*\n\n"
+        f"🎬 Фильмов в базе: {movies_count}\n"
+        f"👥 Активных подписок: {subs_count}\n\n"
+        f"📢 *Спонсоры:*\n"
+        f"✅ Прошли проверку: {sponsor_stats['completed']}\n"
+        f"📝 Заявок подано: {sponsor_stats['total_requests']}\n"
         f"🔗 Подписок оформлено: {sponsor_stats['total_subs']}"
     )
 
     await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
 
 # ========== КОМАНДА /add (вызов добавления) ==========
 @dp.message(Command("add"))
@@ -1005,9 +941,7 @@ async def quick_add_start(message: types.Message, state: FSMContext):
         return
     await state.clear()
     await message.answer(
-        "🎬 *Добавление фильма*
-
-Отправьте видео (файлом) или напишите `file_id`, если он уже есть.",
+        "🎬 *Добавление фильма*\n\nОтправьте видео (файлом) или напишите `file_id`, если он уже есть.",
         parse_mode="Markdown"
     )
     await state.set_state(QuickAdd.waiting_for_file_id)
@@ -1021,9 +955,7 @@ async def admin_add_movie_callback(callback: types.CallbackQuery, state: FSMCont
     await callback.answer()
     await state.clear()
     await callback.message.answer(
-        "🎬 *Добавление фильма*
-
-Отправьте видео (файлом) или напишите `file_id`, если он уже есть.",
+        "🎬 *Добавление фильма*\n\nОтправьте видео (файлом) или напишите `file_id`, если он уже есть.",
         parse_mode="Markdown"
     )
     await state.set_state(QuickAdd.waiting_for_file_id)
@@ -1036,10 +968,7 @@ async def quick_add_file_id(message: types.Message, state: FSMContext):
 
     if message.video:
         file_id = message.video.file_id
-        await message.answer(f"✅ Видео получено, `file_id`:
-`{file_id}`
-
-Теперь введите *ключевые слова* через запятую:", parse_mode="Markdown")
+        await message.answer(f"✅ Видео получено, `file_id`:\n`{file_id}`\n\nТеперь введите *ключевые слова* через запятую:", parse_mode="Markdown")
     else:
         file_id = message.text.strip()
         if len(file_id) < 20:
@@ -1153,19 +1082,15 @@ async def quick_add_rating_imdb(message: types.Message, state: FSMContext):
     conn.close()
 
     await message.answer(
-        f"✅ *Фильм добавлен!*
-"
-        f"🎬 {data['title']} ({data.get('year', '—')})
-"
-        f"🆔 ID: `{movie_id}`
-"
-        f"🔑 Ключевые слова: `{data['keywords']}`
-
-"
+        f"✅ *Фильм добавлен!*\n"
+        f"🎬 {data['title']} ({data.get('year', '—')})\n"
+        f"🆔 ID: `{movie_id}`\n"
+        f"🔑 Ключевые слова: `{data['keywords']}`\n\n"
         f"Теперь он доступен в поиске.",
         parse_mode="Markdown"
     )
     await state.clear()
+
 
 # ========== ОСТАЛЬНЫЕ АДМИНСКИЕ ФУНКЦИИ ==========
 @dp.callback_query(lambda c: c.data == "admin_stats")
@@ -1178,20 +1103,12 @@ async def admin_stats(callback: types.CallbackQuery):
     sponsor_stats = get_sponsor_stats()
 
     text = (
-        f"📊 *Статистика*
-
-"
-        f"🎬 Фильмов в базе: {movies_count}
-"
-        f"👥 Активных подписок: {subs_count}
-
-"
-        f"📢 *Спонсоры:*
-"
-        f"✅ Прошли проверку: {sponsor_stats['completed']}
-"
-        f"📝 Заявок подано: {sponsor_stats['total_requests']}
-"
+        f"📊 *Статистика*\n\n"
+        f"🎬 Фильмов в базе: {movies_count}\n"
+        f"👥 Активных подписок: {subs_count}\n\n"
+        f"📢 *Спонсоры:*\n"
+        f"✅ Прошли проверку: {sponsor_stats['completed']}\n"
+        f"📝 Заявок подано: {sponsor_stats['total_requests']}\n"
         f"🔗 Подписок оформлено: {sponsor_stats['total_subs']}"
     )
 
@@ -1219,15 +1136,11 @@ async def admin_list_movies(callback: types.CallbackQuery):
         )
         await callback.answer()
         return
-    text = "📋 *Список фильмов (новые сверху):*
-
-"
+    text = "📋 *Список фильмов (новые сверху):*\n\n"
     for movie in movies[:20]:
-        text += f"🎬 ID: `{movie[0]}` | {movie[1]} ({movie[2]})
-"
+        text += f"🎬 ID: `{movie[0]}` | {movie[1]} ({movie[2]})\n"
     if len(movies) > 20:
-        text += f"
-...и ещё {len(movies) - 20} фильмов"
+        text += f"\n...и ещё {len(movies) - 20} фильмов"
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
@@ -1244,9 +1157,7 @@ async def admin_delete_movie_prompt(callback: types.CallbackQuery, state: FSMCon
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     await callback.message.edit_text(
-        "🗑 *Удаление фильма*
-
-Введите ID фильма, который нужно удалить.",
+        "🗑 *Удаление фильма*\n\nВведите ID фильма, который нужно удалить.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
@@ -1276,13 +1187,12 @@ async def process_delete_movie(message: types.Message, state: FSMContext):
 async def back_to_admin(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
-        "🔐 *Админ-панель*
-
-Выберите действие:",
+        "🔐 *Админ-панель*\n\nВыберите действие:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_admin_keyboard()
     )
     await callback.answer()
+
 
 # ========== ОБРАБОТЧИК /start ==========
 @dp.message(Command("start"))
